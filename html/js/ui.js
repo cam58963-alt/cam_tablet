@@ -362,6 +362,11 @@
         if (state.locked) { state.pendingApp = id; return null; }
         // アプリ専用端末モードでは対象アプリ以外は開けない
         if (state.standalone && id !== state.standaloneApp) return null;
+        // 通常モードではインストール済みのアプリしか開けない (OpenApp export などでストアを迂回させない)
+        if (!state.standalone && !T.isInstalled(id)) {
+            T.toast({ title: app.label, message: 'このアプリはインストールされていません', icon: 'fa-solid fa-bag-shopping', color: '#0a84ff' });
+            return null;
+        }
         // 職業変更などで利用条件を満たさなくなったアプリは開けない (専用端末アイテムで開いた場合はサーバーが locked=false にする)
         if (app.locked) {
             T.toast({ title: app.label, message: 'このアプリを利用する権限がありません', icon: 'fa-solid fa-lock', color: '#ff453a' });
@@ -790,7 +795,10 @@
             const layer = els['modal-layer'];
             const backdrop = h('div', { class: 'modal-backdrop' });
             const box = h('div', { class: 'modal' });
+            let closed = false;
             const done = (value) => {
+                if (closed) return;
+                closed = true;
                 backdrop.classList.add('out');
                 setTimeout(() => backdrop.remove(), 200);
                 resolve(value);
@@ -806,7 +814,9 @@
     };
 
     T.closeTopModal = function closeTopModal() {
-        const top = els['modal-layer'].lastElementChild;
+        // 閉じるアニメーション中 (.out) の物は除外。除外しないと同じモーダルを返し続けてループが終わらない
+        const open = els['modal-layer'].querySelectorAll('.modal-backdrop:not(.out)');
+        const top = open[open.length - 1];
         if (!top) return false;
         top._close();
         return true;

@@ -1,6 +1,7 @@
 local isOpen = false
 local isOpening = false
 local isStandalone = false
+local standaloneApp
 local tabletProp
 
 ---------------------------------------------------------------------
@@ -153,6 +154,7 @@ local function openTablet(appId, standalone)
     -- 専用アイテムを持っていない場合 (OpenApp export など) は通常モード
     if standalone and not data.device then standalone = false end
     isStandalone = standalone
+    standaloneApp = standalone and appId or nil
 
     data.profile = getProfile()
     data.config = uiConfig()
@@ -281,8 +283,10 @@ RegisterNetEvent('cam_tablet:client:notify', function(notification)
 end)
 
 local function refreshCatalog()
-    if not isOpen or isStandalone then return end
-    local data = lib.callback.await('cam_tablet:server:getData', false)
+    if not isOpen then return end
+    -- 専用端末モードでは対象アプリを含むカタログを取り直す (消えていれば NUI 側で閉じる)
+    local data = lib.callback.await('cam_tablet:server:getData', false, standaloneApp, isStandalone)
+    if isStandalone and (not data or not data.device) then data = { catalog = {}, installed = {} } end
     if data then
         SendNUIMessage({ action = 'catalog', data = { catalog = data.catalog, installed = data.installed, removed = data.removed } })
     end

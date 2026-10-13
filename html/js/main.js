@@ -28,7 +28,8 @@
         T.renderHome();
         T.show();
 
-        const target = data.openApp && T.getApp(data.openApp) ? data.openApp : null;
+        // 専用端末モード以外では、インストール済みのアプリだけを直接開ける
+        const target = data.openApp && T.getApp(data.openApp) && (state.standalone || T.isInstalled(data.openApp)) ? data.openApp : null;
         if (state.standalone && !target) {
             // 専用アプリが見つからない (登録元リソースが停止中など)
             T.requestClose();
@@ -91,7 +92,7 @@
                 reset();
                 break;
             case 'openApp':
-                if (T.getApp(d.app) && !state.standalone) {
+                if (T.getApp(d.app) && T.isInstalled(d.app) && !state.standalone) {
                     if (state.locked) state.pendingApp = d.app;
                     else T.openApp(d.app);
                 }
@@ -105,6 +106,11 @@
                 break;
             case 'catalog':
                 T.setCatalog(d.data.catalog, d.data.installed);
+                // 登録元リソースの停止などで専用端末のアプリが消えたらタブレットごと閉じる
+                if (state.standalone && !T.getApp(state.standaloneApp)) {
+                    T.requestClose();
+                    break;
+                }
                 if (state.current && !state.standalone && !T.isInstalled(state.current.id) && !T.getApp(state.current.id)?.system) {
                     T.closeApp(true);
                 }
