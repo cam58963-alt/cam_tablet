@@ -115,8 +115,9 @@
             },
             onPointerdown: (e) => onTilePointerDown(e, app, tile),
         },
-        h('div', { class: 'icon-wrap' },
+        h('div', { class: `icon-wrap${app.locked ? ' locked' : ''}` },
             T.appIcon(app),
+            app.locked ? h('span', { class: 'lock-badge' }, T.icon('fa-solid fa-lock')) : null,
             badge ? h('span', { class: 'badge' }, badge > 99 ? '99+' : badge) : null,
             progress != null ? h('div', { class: 'dl-ring', style: { '--p': progress } }) : null,
             !app.system && progress == null ? h('button', {
@@ -362,6 +363,11 @@
         if (state.locked) { state.pendingApp = id; return null; }
         // アプリ専用端末モードでは対象アプリ以外は開けない
         if (state.standalone && id !== state.standaloneApp) return null;
+        // 職業変更などで利用条件を満たさなくなったアプリは開けない (専用端末アイテムで開いた場合はサーバーが locked=false にする)
+        if (app.locked) {
+            T.toast({ title: app.label, message: 'このアプリを利用する権限がありません', icon: 'fa-solid fa-lock', color: '#ff453a' });
+            return null;
+        }
         T.exitEditMode();
         hideContextMenu();
         T.closeControlCenter();
