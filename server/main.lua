@@ -343,6 +343,8 @@ local function loadData(cid)
 
     -- DB を待っている間に別の処理が先に読み込み済みなら、そちらを使う (後から上書きすると先の変更が消える)
     if Cache[cid] then return Cache[cid] end
+    -- DB を待っている間にログアウト / 切断していたらキャッシュに入れない (破棄済みのため残り続けてしまう)
+    if not isActive(cid) then return data end
     Cache[cid] = data
     if not row then persist(cid) end
     return data

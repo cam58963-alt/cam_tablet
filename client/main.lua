@@ -49,7 +49,10 @@ local function startAnimation(sid)
         while alive(sid) do
             if not IsEntityPlayingAnim(cache.ped, anim.dict, anim.clip, 3) and not IsPedInAnyVehicle(cache.ped, false) then
                 lib.requestAnimDict(anim.dict)
-                TaskPlayAnim(cache.ped, anim.dict, anim.clip, 3.0, 3.0, -1, 49, 0, false, false, false)
+                -- 読み込みを待っている間に閉じられていたら再生しない
+                if alive(sid) then
+                    TaskPlayAnim(cache.ped, anim.dict, anim.clip, 3.0, 3.0, -1, 49, 0, false, false, false)
+                end
                 RemoveAnimDict(anim.dict)
             end
             Wait(1000)
@@ -349,7 +352,12 @@ function refreshCatalog()
     local data = lib.callback.await('cam_tablet:server:getData', false, device, device ~= nil)
     -- 待っている間に閉じた / 別モードで開き直した場合、古い結果は捨てる
     if not alive(sid) then return end
-    if standalone and (not data or not data.device) then data = { catalog = {}, installed = {} } end
+    -- タブレット本体も専用アイテムの許可も無くなった (アプリ削除・アイテムを手放したなど) なら閉じる
+    if not data then
+        closeTablet(false)
+        return
+    end
+    if standalone and not data.device then data = { catalog = {}, installed = {} } end
     if data then
         if not data.device then deviceApp = nil end
         SendNUIMessage({ action = 'catalog', data = {
