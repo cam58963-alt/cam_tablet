@@ -49,6 +49,19 @@
 
         T.emit('open');
         state.ready = true;
+        notifyRemoved(data.removed);
+    }
+
+    // 職業変更などで自動アンインストールされたアプリを通知
+    function notifyRemoved(removed) {
+        if (!Array.isArray(removed) || !removed.length) return;
+        T.notify({
+            title: 'App Store',
+            message: `利用条件を満たさなくなったため削除しました: ${removed.join('、')}`,
+            icon: 'fa-solid fa-trash',
+            color: '#8e8e93',
+            silentBadge: true,
+        });
     }
 
     function reset() {
@@ -92,8 +105,12 @@
                 break;
             case 'catalog':
                 T.setCatalog(d.data.catalog, d.data.installed);
+                if (state.current && !state.standalone && !T.isInstalled(state.current.id) && !T.getApp(state.current.id)?.system) {
+                    T.closeApp(true);
+                }
                 T.renderHome();
                 T.emit('installed');
+                notifyRemoved(d.data.removed);
                 break;
             case 'appMessage':
                 T.sendToApp(d.app, d.data);

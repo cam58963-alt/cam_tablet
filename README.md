@@ -91,6 +91,7 @@ QBox (qbx_core) 用のタブレット UI リソースです。
     size = 64,                     -- MB (ダウンロード演出用)
     url = 'nui://my_mdt/html/index.html', -- 外部アプリ (iframe)。省略すると組み込みアプリ
     jobs = { police = 0 },         -- 職業制限 (数字は最低グレード)。{ 'police', 'ambulance' } でも可
+                                   -- 転職などで条件を満たさなくなると自動でアンインストールされます
     gangs = { ballas = 0 },        -- ギャング制限 (jobs とどちらかを満たせばOK)
     item = 'usb_mdt',              -- インストールに必要なアイテム
     consumeItem = true,            -- インストール時にアイテムを消費
@@ -210,7 +211,7 @@ AddEventHandler('cam_tablet:client:appClosed', function(appId) end)
 | `RegisterApp(app)` | アプリを登録（配列で複数可）。登録元リソース停止で自動削除 |
 | `RemoveApp(appId)` | アプリを削除 |
 | `RegisterAppItem(item, appId)` | 専用端末アイテムを登録 |
-| `InstallApp(src, appId)` | 条件無視でプレイヤーにインストール（報酬など） |
+| `InstallApp(src, appId)` | 条件無視でプレイヤーにインストール（報酬など。職業制限のあるアプリは条件を満たさないと次回開いた時に削除されます） |
 | `UninstallApp(src, appId)` | アンインストール |
 | `HasApp(src, appId)` | インストール済みか |
 | `GetInstalledApps(src)` | インストール済み一覧 |

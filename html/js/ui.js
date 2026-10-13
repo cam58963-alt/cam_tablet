@@ -115,9 +115,8 @@
             },
             onPointerdown: (e) => onTilePointerDown(e, app, tile),
         },
-        h('div', { class: `icon-wrap${app.locked ? ' locked' : ''}` },
+        h('div', { class: 'icon-wrap' },
             T.appIcon(app),
-            app.locked ? h('span', { class: 'lock-badge' }, T.icon('fa-solid fa-lock')) : null,
             badge ? h('span', { class: 'badge' }, badge > 99 ? '99+' : badge) : null,
             progress != null ? h('div', { class: 'dl-ring', style: { '--p': progress } }) : null,
             !app.system && progress == null ? h('button', {

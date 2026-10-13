@@ -280,13 +280,19 @@ RegisterNetEvent('cam_tablet:client:notify', function(notification)
     SendNUIMessage({ action = 'notify', data = notification })
 end)
 
-RegisterNetEvent('cam_tablet:client:catalogChanged', function()
+local function refreshCatalog()
     if not isOpen or isStandalone then return end
     local data = lib.callback.await('cam_tablet:server:getData', false)
     if data then
-        SendNUIMessage({ action = 'catalog', data = { catalog = data.catalog, installed = data.installed } })
+        SendNUIMessage({ action = 'catalog', data = { catalog = data.catalog, installed = data.installed, removed = data.removed } })
     end
-end)
+end
+
+RegisterNetEvent('cam_tablet:client:catalogChanged', refreshCatalog)
+
+-- 開いている間に職業/ギャングが変わったら、利用できなくなったアプリを反映する
+RegisterNetEvent('QBCore:Client:OnJobUpdate', refreshCatalog)
+RegisterNetEvent('QBCore:Client:OnGangUpdate', refreshCatalog)
 
 local function onUnload()
     closeTablet(false)

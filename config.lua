@@ -86,6 +86,7 @@ Config.StorageMB = 32768
     url         : 外部アプリ (iframe) のURL  例: 'nui://my_resource/html/index.html'
                   ※ 外部スクリプトからは exports.cam_tablet:RegisterApp でも追加できます (README 参照)
     jobs        : 利用できる職業 { police = 0 } (数字は必要な最低グレード) / { 'police', 'ambulance' }
+                  条件を満たさなくなったアプリは次にタブレットを開いた時 (開いている間の転職なら即時) に自動でアンインストールされます
     gangs       : 利用できるギャング (jobs と同じ形式。jobs と gangs はどちらかを満たせばOK)
     item        : インストールに必要なアイテム
     consumeItem : true でインストール時に item を消費

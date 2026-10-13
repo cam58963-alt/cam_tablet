@@ -283,6 +283,20 @@ local function ensureSystemApps(data, cid)
     if changed then persist(cid) end
 end
 
+-- 職業/ギャング変更などで利用条件を満たさなくなったアプリは自動でアンインストールする
+local function pruneRestrictedApps(data, player, cid)
+    local removed = {}
+    for i = #data.apps, 1, -1 do
+        local app = Catalog[data.apps[i]]
+        if app and not app.system and not hasAccess(player, app) then
+            table.remove(data.apps, i)
+            table.insert(removed, 1, app.label)
+        end
+    end
+    if #removed > 0 then persist(cid) end
+    return removed
+end
+
 local function getData(src)
     local player = getPlayer(src)
     if not player then return end
@@ -290,7 +304,8 @@ local function getData(src)
     SourceCid[src] = cid
     local data = loadData(cid)
     ensureSystemApps(data, cid)
-    return data, player, cid
+    local removed = pruneRestrictedApps(data, player, cid)
+    return data, player, cid, removed
 end
 
 AddEventHandler('playerDropped', function()
@@ -432,11 +447,12 @@ lib.callback.register('cam_tablet:server:getData', function(src, appId, viaDevic
     local device = viaDevice == true and hasDeviceItem(src, appId)
     if not device and not canOpen(src) then return false end
 
-    local data, player = getData(src)
+    local data, player, _, removed = getData(src)
     if not data then return false end
 
     return {
         device = device,
+        removed = #removed > 0 and removed or nil,
         catalog = buildCatalog(src, player, device and appId or nil),
         installed = filterInstalled(data.apps),
         settings = data.settings,
