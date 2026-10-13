@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>cam_tablet</title>
+    <link rel="stylesheet" href="vendor/fontawesome/css/all.min.css">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/apps.css">
+</head>
+<body>
+    <div id="root" class="hidden">
+        <div id="tablet">
+            <div class="tablet-camera"></div>
+            <div id="screen">
+                <div id="wallpaper"></div>
+                <div id="wallpaper-dim"></div>
+
+                <div id="statusbar">
+                    <div class="sb-left">
+                        <span id="sb-time">--:--</span>
+                        <span id="sb-date"></span>
+                    </div>
+                    <div class="sb-right" id="sb-right" title="コントロールセンター">
+                        <i class="fa-solid fa-signal"></i>
+                        <i class="fa-solid fa-wifi"></i>
+                        <span id="sb-battery-text">100%</span>
+                        <i class="fa-solid fa-battery-full"></i>
+                    </div>
+                </div>
+
+                <div id="home">
+                    <div id="widgets"></div>
+                    <div id="app-grid"></div>
+                </div>
+                <div id="dock"></div>
+                <button id="edit-done" type="button">完了</button>
+
+                <div id="app-layer"></div>
+                <div id="lockscreen" class="hidden"></div>
+                <div id="control-center" class="hidden"></div>
+                <div id="context-menu" class="hidden"></div>
+                <div id="modal-layer"></div>
+                <div id="toasts"></div>
+
+                <div id="homebar" title="ホーム"><span></span></div>
+                <div id="brightness"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/core.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/apps/store.js"></script>
+    <script src="js/apps/settings.js"></script>
+    <script src="js/apps/notes.js"></script>
+    <script src="js/apps/calculator.js"></script>
+    <script src="js/apps/clock.js"></script>
+    <script src="js/apps/calendar.js"></script>
+    <script src="js/apps/profile.js"></script>
+    <script src="js/apps/guide.js"></script>
+    <script src="js/mock.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>

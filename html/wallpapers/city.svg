@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0a23"/>
+      <stop offset=".6" stop-color="#2b1055"/>
+      <stop offset="1" stop-color="#d53369"/>
+    </linearGradient>
+    <linearGradient id="far" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a1c71"/>
+      <stop offset="1" stop-color="#1a0b33"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#sky)"/>
+  <g fill="#fff" opacity=".7">
+    <circle cx="120" cy="90" r="1.6"/><circle cx="340" cy="160" r="1.2"/><circle cx="560" cy="70" r="1.8"/>
+    <circle cx="820" cy="140" r="1.3"/><circle cx="1010" cy="60" r="1.5"/><circle cx="1260" cy="120" r="1.2"/>
+    <circle cx="1480" cy="80" r="1.7"/><circle cx="700" cy="230" r="1.1"/><circle cx="1380" cy="240" r="1.3"/>
+  </g>
+  <circle cx="1240" cy="260" r="70" fill="#ffd6e0" opacity=".85"/>
+  <path fill="url(#far)" d="M0 700 V560 h80 v-60 h60 v90 h70 v-140 h50 v140 h60 v-80 h90 v120 h40 v-200 h70 v200 h60 v-110 h80 v70 h50 v-170 h40 v-40 h40 v210 h70 v-90 h90 v120 h60 v-160 h70 v160 h50 v-70 h80 v-60 h50 v150 h70 v-120 h60 v100 h40 V700Z"/>
+  <path fill="#0d0620" d="M0 1000 V760 h120 v-90 h60 v-40 h40 v130 h100 v-170 h80 v170 h40 v-60 h110 v-120 h50 v180 h90 v-90 h70 v-150 h60 v150 h80 v80 h60 v-200 h90 v200 h50 v-110 h100 v140 h70 v-60 h90 v-150 h50 v220 V1000Z"/>
+  <g fill="#ffcf70" opacity=".8">
+    <rect x="345" y="660" width="8" height="10"/><rect x="365" y="700" width="8" height="10"/><rect x="345" y="740" width="8" height="10"/>
+    <rect x="690" y="690" width="8" height="10"/><rect x="710" y="730" width="8" height="10"/><rect x="1010" y="640" width="8" height="10"/>
+    <rect x="1030" y="690" width="8" height="10"/><rect x="1010" y="740" width="8" height="10"/><rect x="1265" y="760" width="8" height="10"/>
+    <rect x="1285" y="800" width="8" height="10"/><rect x="560" y="720" width="8" height="10"/><rect x="860" y="780" width="8" height="10"/>
+  </g>
+</svg>

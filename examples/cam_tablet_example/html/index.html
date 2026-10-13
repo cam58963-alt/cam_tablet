@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="nui://cam_tablet/html/sdk/cam-tablet.css">
+    <link rel="stylesheet" href="nui://cam_tablet/html/vendor/fontawesome/css/all.min.css">
+    <style>
+        .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+        .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+        pre { margin: 10px 0 0; padding: 12px; border-radius: 10px; background: var(--ct-bg-3); white-space: pre-wrap; font-size: 13px; min-height: 60px; }
+        h2 { margin: 0 0 4px; font-size: 18px; }
+    </style>
+</head>
+<body>
+    <div class="ct-page">
+        <h1 class="ct-title"><i class="fa-solid fa-flask"></i> サンプルアプリ</h1>
+        <p class="ct-muted" id="hello">読み込み中...</p>
+
+        <div class="grid">
+            <div class="ct-card">
+                <h2>タブレット操作</h2>
+                <div class="ct-muted">CamTablet.notify / confirm / prompt / home / close</div>
+                <div class="row">
+                    <button class="ct-btn primary" id="btn-notify">通知を送る</button>
+                    <button class="ct-btn" id="btn-confirm">確認ダイアログ</button>
+                    <button class="ct-btn" id="btn-prompt">入力ダイアログ</button>
+                    <button class="ct-btn" id="btn-home">ホームへ</button>
+                    <button class="ct-btn danger" id="btn-close">閉じる</button>
+                </div>
+                <pre id="out-ui"></pre>
+            </div>
+
+            <div class="ct-card">
+                <h2>Lua と連携</h2>
+                <div class="ct-muted">emit → appEvent → SendAppMessage / post → NUIコールバック</div>
+                <div class="row">
+                    <button class="ct-btn primary" id="btn-coords">現在地を取得 (emit)</button>
+                    <button class="ct-btn" id="btn-wp">ウェイポイント設定</button>
+                    <button class="ct-btn" id="btn-info">サーバー情報 (post)</button>
+                </div>
+                <pre id="out-lua"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script src="nui://cam_tablet/html/sdk/cam-tablet.js"></script>
+    <script>
+        const $ = (id) => document.getElementById(id);
+        let last = null;
+
+        CamTablet.ready((t) => {
+            $('hello').textContent = `こんにちは、${(t.profile.name || '').trim() || 'ゲスト'} さん (app: ${t.app} / resource: ${t.resource})`;
+        });
+
+        $('btn-notify').onclick = () => CamTablet.notify('サンプル', 'iframe アプリからの通知です');
+        $('btn-confirm').onclick = async () => { $('out-ui').textContent = `confirm: ${await CamTablet.confirm({ title: '実行しますか？', message: 'サンプルの確認です' })}`; };
+        $('btn-prompt').onclick = async () => { $('out-ui').textContent = `prompt: ${await CamTablet.prompt({ title: '名前を入力', placeholder: 'John Doe' })}`; };
+        $('btn-home').onclick = () => CamTablet.home();
+        $('btn-close').onclick = () => CamTablet.close();
+
+        $('btn-coords').onclick = () => CamTablet.emit('getCoords');
+        $('btn-wp').onclick = () => last ? CamTablet.emit('waypoint', { x: last.x + 100, y: last.y }) : CamTablet.toast('サンプル', '先に現在地を取得してください');
+        $('btn-info').onclick = async () => { $('out-lua').textContent = JSON.stringify(await CamTablet.post('getInfo'), null, 2); };
+
+        CamTablet.on('message', (data) => {
+            if (data && data.type === 'coords') {
+                last = data;
+                $('out-lua').textContent = `${data.street}\nx: ${data.x}  y: ${data.y}  z: ${data.z}`;
+            }
+        });
+    </script>
+</body>
+</html>
