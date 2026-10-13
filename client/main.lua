@@ -7,7 +7,7 @@ local sessionId = 0 -- 開いている1回分のセッション。ループや�
 local function alive(sid)
     return isOpen and sid == sessionId
 end
-local standaloneApp
+local deviceApp -- 専用端末アイテムで許可されたアプリ (専用端末モードかどうかとは別に管理)
 local refreshCatalog -- 下で定義
 local tabletProp
 
@@ -19,10 +19,20 @@ local function startAnimation(sid)
     local anim = Config.Animation
     if not anim.enabled then return end
 
-    local ped = cache.ped
     lib.requestAnimDict(anim.dict)
     lib.requestModel(anim.prop)
 
+    -- 読み込みを待っている間に閉じられた場合は何も作らない
+    if not alive(sid) then
+        RemoveAnimDict(anim.dict)
+        SetModelAsNoLongerNeeded(anim.prop)
+        return
+    end
+
+    -- 前回のプロップが残っていれば消してから作る
+    if tabletProp and DoesEntityExist(tabletProp) then DeleteEntity(tabletProp) end
+
+    local ped = cache.ped
     local coords = GetEntityCoords(ped)
     tabletProp = CreateObject(anim.prop, coords.x, coords.y, coords.z + 0.2, true, true, false)
     AttachEntityToEntity(tabletProp, ped, GetPedBoneIndex(ped, anim.bone),
@@ -139,17 +149,19 @@ local function closeTablet(fromUi)
     stopAnimation()
 end
 
-local function openTablet(appId, standalone)
+--- appId: 開くアプリ / standalone: 専用端末モード (ホーム無し) / viaDevice: 専用端末アイテムで開いた
+local function openTablet(appId, standalone, viaDevice)
     if isOpening then return end
 
     standalone = standalone == true and appId ~= nil
+    viaDevice = (viaDevice == true or standalone) and appId ~= nil
 
     if isOpen then
-        if not standalone and not isStandalone then
+        if not standalone and not isStandalone and not viaDevice then
             if appId then SendNUIMessage({ action = 'openApp', app = appId }) end
             return
         end
-        -- 専用端末モードの切り替えは開き直す
+        -- 専用端末モード / 専用アイテムでの起動は開き直す
         closeTablet(false)
     end
 
@@ -160,7 +172,7 @@ local function openTablet(appId, standalone)
     isOpening = true
     openToken = openToken + 1
     local token = openToken
-    local data = lib.callback.await('cam_tablet:server:getData', false, appId, standalone)
+    local data = lib.callback.await('cam_tablet:server:getData', false, appId, viaDevice)
     isOpening = false
 
     -- 待っている間に Close() / ログアウトされたら開かない
@@ -173,7 +185,7 @@ local function openTablet(appId, standalone)
     -- 専用アイテムを持っていない場合 (OpenApp export など) は通常モード
     if standalone and not data.device then standalone = false end
     isStandalone = standalone
-    standaloneApp = standalone and appId or nil
+    deviceApp = data.device and appId or nil
 
     data.profile = getProfile()
     data.config = uiConfig()
@@ -212,8 +224,8 @@ local function openTablet(appId, standalone)
     end)
 end
 
-RegisterNetEvent('cam_tablet:client:open', function(appId, standalone)
-    openTablet(appId, standalone)
+RegisterNetEvent('cam_tablet:client:open', function(appId, standalone, viaDevice)
+    openTablet(appId, standalone, viaDevice)
 end)
 
 RegisterNetEvent('cam_tablet:client:close', function()
@@ -320,14 +332,18 @@ end)
 
 function refreshCatalog()
     if not isOpen then return end
-    local sid, standalone = sessionId, isStandalone
-    -- 専用端末モードでは対象アプリを含むカタログを取り直す (消えていれば NUI 側で閉じる)
-    local data = lib.callback.await('cam_tablet:server:getData', false, standaloneApp, standalone)
+    local sid, standalone, device = sessionId, isStandalone, deviceApp
+    -- 専用アイテムで開いている場合は対象アプリを含むカタログを取り直す (消えていれば NUI 側で閉じる)
+    local data = lib.callback.await('cam_tablet:server:getData', false, device, device ~= nil)
     -- 待っている間に閉じた / 別モードで開き直した場合、古い結果は捨てる
     if not alive(sid) then return end
     if standalone and (not data or not data.device) then data = { catalog = {}, installed = {} } end
     if data then
-        SendNUIMessage({ action = 'catalog', data = { catalog = data.catalog, installed = data.installed, removed = data.removed, added = data.added } })
+        if not data.device then deviceApp = nil end
+        SendNUIMessage({ action = 'catalog', data = {
+            catalog = data.catalog, installed = data.installed, removed = data.removed, added = data.added,
+            device = data.device == true, profile = getProfile(),
+        } })
     end
 end
 
@@ -353,7 +369,8 @@ end)
 ---------------------------------------------------------------------
 
 exports('Open', function(appId) openTablet(appId) end)
-exports('OpenApp', function(appId, standalone) openTablet(appId, standalone) end)
+--- standalone = true は専用端末アイテムを持っている場合のみ有効
+exports('OpenApp', function(appId, standalone) openTablet(appId, standalone, standalone) end)
 exports('Close', function() closeTablet(false) end)
 exports('IsOpen', function() return isOpen end)
 exports('IsStandalone', function() return isOpen and isStandalone end)

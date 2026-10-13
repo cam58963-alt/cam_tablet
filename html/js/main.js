@@ -21,6 +21,7 @@
         state.config = data.config || state.config || {};
         state.standalone = !!data.standalone && !!data.openApp;
         state.standaloneApp = state.standalone ? data.openApp : null;
+        state.deviceApp = data.device && data.openApp ? data.openApp : null;
         state.profile = data.profile || {};
         state.notes = Array.isArray(data.notes) ? data.notes : [];
         state.events = Array.isArray(data.events) ? data.events : [];
@@ -40,7 +41,7 @@
 
         // 専用端末モード以外では、インストール済みのアプリだけを直接開ける (指定が無ければ前回開いていた組み込みアプリを再開)
         const requested = data.openApp || resumeId;
-        const target = requested && T.getApp(requested) && (state.standalone || T.isInstalled(requested)) ? requested : null;
+        const target = requested && T.getApp(requested) && (state.standalone || T.isInstalled(requested) || requested === state.deviceApp) ? requested : null;
         if (state.standalone && !target) {
             // 専用アプリが見つからない (登録元リソースが停止中など)
             T.requestClose();
@@ -115,6 +116,12 @@
                 break;
             case 'catalog':
                 T.setCatalog(d.data.catalog, d.data.installed);
+                if (!d.data.device) state.deviceApp = null;
+                // 職業/ギャング変更時は最新のプロフィールも反映
+                if (d.data.profile) {
+                    state.profile = d.data.profile;
+                    T.emit('profile');
+                }
                 // 登録元リソースの停止などで専用端末のアプリが消えたらタブレットごと閉じる
                 if (state.standalone && !T.getApp(state.standaloneApp)) {
                     T.requestClose();

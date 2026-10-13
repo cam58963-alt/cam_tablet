@@ -86,7 +86,7 @@ local function registerDeviceItem(item, appId, resource)
         exports.qbx_core:CreateUseableItem(item, function(source)
             local entry = DeviceItems[item]
             if not entry then return end
-            TriggerClientEvent('cam_tablet:client:open', source, entry.app, Config.AppItemStandalone)
+            TriggerClientEvent('cam_tablet:client:open', source, entry.app, Config.AppItemStandalone, true)
         end)
     end
     return true

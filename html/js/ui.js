@@ -363,7 +363,7 @@
         // アプリ専用端末モードでは対象アプリ以外は開けない
         if (state.standalone && id !== state.standaloneApp) return null;
         // 通常モードではインストール済みのアプリしか開けない (OpenApp export などでストアを迂回させない)
-        if (!state.standalone && !T.isInstalled(id)) {
+        if (!state.standalone && !T.isInstalled(id) && id !== state.deviceApp) {
             T.toast({ title: app.label, message: 'このアプリはインストールされていません', icon: 'fa-solid fa-bag-shopping', color: '#0a84ff' });
             return null;
         }
@@ -449,6 +449,7 @@
         if (!state.current) return false;
         if (!cur) return true;
         if (state.standalone) return cur.id !== state.standaloneApp;
+        if (cur.id === state.deviceApp) return false;
         return !!cur.locked || (!T.isInstalled(cur.id) && !cur.system);
     };
 
@@ -483,6 +484,7 @@
     T.on('visibility', (visible) => postToIframe(state.current, { type: 'visibility', visible }));
     // 開き直した時、開いたままの iframe アプリに最新のプロフィールを送る
     T.on('open', () => postToIframe(state.current, { type: 'profile', profile: state.profile }));
+    T.on('profile', () => postToIframe(state.current, { type: 'profile', profile: state.profile }));
 
     // iframe アプリからのメッセージ
     T.handleIframeMessage = function handleIframeMessage(e) {

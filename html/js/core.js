@@ -46,6 +46,7 @@
             config: {},
             standalone: false,
             standaloneApp: null,
+            deviceApp: null, // 専用端末アイテムで許可されたアプリ (未インストール・職業制限でも開ける)
             locked: false,
             pendingApp: null,
             current: null, // { id, win, mod, iframe, offs }
@@ -261,8 +262,12 @@
 
     /* ---------- Settings ---------- */
 
+    // 変更ごとに番号を進め、送信後に新しい変更があった場合はサーバーの応答で上書きしない
+    let settingsRev = 0;
     const pushSettings = T.debounce(async () => {
-        const result = await T.nui('saveSettings', { settings: T.state.settings });
+        const rev = settingsRev;
+        const result = await T.nui('saveSettings', { settings: { ...T.state.settings } });
+        if (rev !== settingsRev) return;
         if (result && typeof result === 'object' && !Array.isArray(result)) {
             T.state.settings = { ...DEFAULT_SETTINGS, ...result };
             T.applySettings();
@@ -273,6 +278,7 @@
     T.flushSettings = () => pushSettings.flush();
 
     T.updateSettings = function updateSettings(patch) {
+        settingsRev += 1;
         Object.assign(T.state.settings, patch);
         T.applySettings();
         pushSettings();
