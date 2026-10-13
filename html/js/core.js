@@ -202,6 +202,8 @@
             clearTimeout(t);
             t = setTimeout(() => { t = null; fn(...args); }, ms);
         };
+        // 保留中の呼び出しを捨てる
+        wrapped.cancel = () => { clearTimeout(t); t = null; };
         // 保留中の呼び出しがあれば即実行
         wrapped.flush = (...args) => {
             if (t === null) return;
@@ -276,6 +278,20 @@
 
     // 保留中の設定保存をすぐ送る (閉じる時 / 開き直す時に古いスナップショットで上書きされないように)
     T.flushSettings = () => pushSettings.flush();
+
+    // リセットも1回の変更として扱う。保留中の保存は捨て、先に画面へ反映してからサーバーへ送る。
+    // 送信中に新しい変更があった場合や、古い保存の応答が後から届いた場合は上書きしない
+    T.resetSettings = async function resetSettings() {
+        pushSettings.cancel();
+        settingsRev += 1;
+        const rev = settingsRev;
+        T.loadSettings({});
+        T.applySettings();
+        const res = await T.nui('resetSettings');
+        if (rev !== settingsRev) return;
+        T.loadSettings(res && typeof res === 'object' && !Array.isArray(res) ? res : {});
+        T.applySettings();
+    };
 
     T.updateSettings = function updateSettings(patch) {
         settingsRev += 1;

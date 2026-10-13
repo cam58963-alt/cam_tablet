@@ -29,9 +29,6 @@
         if (T.isInstalled(app.id)) {
             return h('button', { class: 'store-btn', onClick: (e) => { e.stopPropagation(); T.openApp(app.id); } }, '開く');
         }
-        if (app.item && !app.hasItem) {
-            return h('button', { class: 'store-btn', disabled: true, title: `${app.itemLabel || app.item} が必要です` }, '入手');
-        }
         return h('button', {
             class: `store-btn primary${opts.big ? ' big' : ''}`,
             onClick: (e) => { e.stopPropagation(); T.downloadApp(app.id); },

@@ -101,9 +101,7 @@
                                 onClick: async () => {
                                     const ok = await T.confirm({ title: '設定をリセットしますか？', message: '壁紙・テーマ・パスコードなどが初期状態に戻ります。アプリとメモは削除されません。', okLabel: 'リセット', danger: true });
                                     if (!ok) return;
-                                    const res = await T.nui('resetSettings');
-                                    T.loadSettings(res && typeof res === 'object' ? res : {});
-                                    T.applySettings();
+                                    await T.resetSettings();
                                     render();
                                 },
                             })),
