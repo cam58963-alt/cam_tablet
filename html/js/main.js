@@ -8,6 +8,7 @@
     function open(data) {
         data = data || {};
         const wasStandalone = state.standalone;
+        T.flushSettings();
 
         // 組み込みアプリはデータ (メモ・予定など) を差し替える前に一度閉じ、新しいデータで開き直す。
         // 開いたままだと古いオブジェクトを編集し続け、保存から漏れる。閉じる時に保留中の保存も送られる。
@@ -28,7 +29,7 @@
         T.loadSettings(data.settings);
 
         // 前回開いていたアプリが使えなくなっていれば閉じる
-        if (state.current && (!T.getApp(state.current.id) || state.standalone || wasStandalone || data.openApp)) {
+        if (state.current && (T.currentAppUnavailable() || state.standalone || wasStandalone || data.openApp)) {
             T.closeApp(false);
         }
 
@@ -119,11 +120,8 @@
                     T.requestClose();
                     break;
                 }
-                if (state.current && !state.standalone) {
-                    const cur = T.getApp(state.current.id);
-                    // 削除された / 利用条件を満たさなくなった (system + jobs のアプリは削除されずロックになる) アプリは閉じる
-                    if (!cur || cur.locked || (!T.isInstalled(cur.id) && !cur.system)) T.closeApp(true);
-                }
+                // 削除された / 利用条件を満たさなくなった (system + jobs のアプリは削除されずロックになる) アプリは閉じる
+                if (!state.standalone && T.currentAppUnavailable()) T.closeApp(true);
                 T.renderHome();
                 T.emit('installed');
                 notifyChanges(d.data);

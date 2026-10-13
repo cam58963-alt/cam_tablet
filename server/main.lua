@@ -154,6 +154,10 @@ local function removeApp(id)
     Catalog[id] = nil
     local idx = contains(CatalogOrder, id)
     if idx then table.remove(CatalogOrder, idx) end
+    -- 専用端末アイテムの紐付けも消す (同じIDで別のアプリが登録された時に古いアイテムで開けないように)
+    for item, entry in pairs(DeviceItems) do
+        if entry.app == id then DeviceItems[item] = nil end
+    end
     return true
 end
 

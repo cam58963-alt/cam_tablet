@@ -15,7 +15,7 @@
  *   CamTablet.close()                タブレットを閉じる
  *   CamTablet.emit(event, data)      Lua の 'cam_tablet:client:appEvent' に送る
  *   CamTablet.post(name, data)       自分のリソースの RegisterNUICallback(name) を呼ぶ -> Promise
- *   CamTablet.on(type, fn)           'message' | 'settings' | 'visibility' | 'init'
+ *   CamTablet.on(type, fn)           'message' | 'settings' | 'visibility' | 'profile' | 'init'
  *   CamTablet.settings / .profile / .app / .resource
  */
 (function () {
@@ -118,6 +118,10 @@
                 CamTablet.settings = d.settings || CamTablet.settings;
                 applyTheme(CamTablet.settings);
                 fire('settings', CamTablet.settings);
+                break;
+            case 'profile':
+                CamTablet.profile = d.profile || {};
+                fire('profile', CamTablet.profile);
                 break;
             case 'visibility':
                 CamTablet.visible = !!d.visible;

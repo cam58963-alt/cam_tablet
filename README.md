@@ -180,6 +180,7 @@ end)
     CamTablet.on('message', (data) => {});                    // <- Lua: exports.cam_tablet:SendAppMessage
     CamTablet.on('settings', (s) => {});                      // テーマ変更など
     CamTablet.on('visibility', (visible) => {});              // タブレットの開閉
+    CamTablet.on('profile', (profile) => {});                 // 開き直した時の最新プロフィール (職業・所持金など)
 </script>
 ```
 

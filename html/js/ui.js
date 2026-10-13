@@ -443,6 +443,15 @@
 
     T.closeApp = (animate) => closeCurrent(animate);
 
+    // 今開いているアプリがもう使えないか (カタログから消えた / ロックされた / アンインストールされた)
+    T.currentAppUnavailable = function currentAppUnavailable() {
+        const cur = state.current && T.getApp(state.current.id);
+        if (!state.current) return false;
+        if (!cur) return true;
+        if (state.standalone) return cur.id !== state.standaloneApp;
+        return !!cur.locked || (!T.isInstalled(cur.id) && !cur.system);
+    };
+
     T.restartApp = function restartApp() {
         const cur = state.current;
         const id = cur ? cur.id : state.standaloneApp;
@@ -472,6 +481,8 @@
         if (cur && cur.iframe) postToIframe(cur, { type: 'settings', settings: publicSettings() });
     });
     T.on('visibility', (visible) => postToIframe(state.current, { type: 'visibility', visible }));
+    // 開き直した時、開いたままの iframe アプリに最新のプロフィールを送る
+    T.on('open', () => postToIframe(state.current, { type: 'profile', profile: state.profile }));
 
     // iframe アプリからのメッセージ
     T.handleIframeMessage = function handleIframeMessage(e) {
@@ -863,6 +874,7 @@
     T.hide = function hide() {
         if (!state.open) return;
         state.open = false;
+        T.flushSettings();
         T.exitEditMode();
         hideContextMenu();
         T.closeControlCenter();

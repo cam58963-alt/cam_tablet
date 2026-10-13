@@ -269,6 +269,9 @@
         }
     }, 400);
 
+    // 保留中の設定保存をすぐ送る (閉じる時 / 開き直す時に古いスナップショットで上書きされないように)
+    T.flushSettings = () => pushSettings.flush();
+
     T.updateSettings = function updateSettings(patch) {
         Object.assign(T.state.settings, patch);
         T.applySettings();
