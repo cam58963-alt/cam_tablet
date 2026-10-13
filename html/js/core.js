@@ -293,6 +293,12 @@
         T.applySettings();
     };
 
+    // 新しいセッション (ログアウト / 開き直し) の設定を読み込む前に呼ぶ。保留中の保存を捨て、送信中の古い応答を無効にする
+    T.beginSettingsSession = function beginSettingsSession() {
+        pushSettings.cancel();
+        settingsRev += 1;
+    };
+
     T.updateSettings = function updateSettings(patch) {
         settingsRev += 1;
         Object.assign(T.state.settings, patch);

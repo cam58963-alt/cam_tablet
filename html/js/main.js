@@ -27,6 +27,7 @@
         state.events = Array.isArray(data.events) ? data.events : [];
         if (data.gameTime) state.gameTime = data.gameTime;
         T.setCatalog(data.catalog, data.installed);
+        T.beginSettingsSession();
         T.loadSettings(data.settings);
 
         // 前回開いていたアプリが使えなくなっていれば閉じる
@@ -80,6 +81,7 @@
         state.notifications = [];
         state.badges = {};
         T.cancelDownloads();
+        T.beginSettingsSession(); // 前のキャラクターの保存待ち・送信中の設定を新しいキャラクターに持ち込まない
         state.ready = false;
     }
 

@@ -333,6 +333,8 @@ local function loadData(cid)
         data = { apps = copy(Config.DefaultApps), settings = {}, notes = {}, events = {} }
     end
 
+    -- DB を待っている間に別の処理が先に読み込み済みなら、そちらを使う (後から上書きすると先の変更が消える)
+    if Cache[cid] then return Cache[cid] end
     Cache[cid] = data
     if not row then persist(cid) end
     return data
