@@ -2,6 +2,11 @@ local isOpen = false
 local isOpening = false
 local isStandalone = false
 local openToken = 0 -- 開く処理の世代。閉じる/ログアウトで進め、待機中の古い open を無効にする
+local sessionId = 0 -- 開いている1回分のセッション。ループや非同期処理は自分のセッションが続いている間だけ動く
+
+local function alive(sid)
+    return isOpen and sid == sessionId
+end
 local standaloneApp
 local refreshCatalog -- 下で定義
 local tabletProp
@@ -10,7 +15,7 @@ local tabletProp
 -- Animation
 ---------------------------------------------------------------------
 
-local function startAnimation()
+local function startAnimation(sid)
     local anim = Config.Animation
     if not anim.enabled then return end
 
@@ -31,7 +36,7 @@ local function startAnimation()
 
     -- アニメーションが他の動作で途切れた場合に再生し直す
     CreateThread(function()
-        while isOpen do
+        while alive(sid) do
             if not IsEntityPlayingAnim(cache.ped, anim.dict, anim.clip, 3) and not IsPedInAnyVehicle(cache.ped, false) then
                 lib.requestAnimDict(anim.dict)
                 TaskPlayAnim(cache.ped, anim.dict, anim.clip, 3.0, 3.0, -1, 49, 0, false, false, false)
@@ -177,13 +182,16 @@ local function openTablet(appId, standalone)
     data.gameTime = { h = GetClockHours(), m = GetClockMinutes() }
 
     isOpen = true
+    sessionId = sessionId + 1
+    local sid = sessionId
     TriggerEvent('cam_tablet:client:opened')
     SendNUIMessage({ action = 'open', data = data })
     SetNuiFocus(true, true)
-    startAnimation()
+    startAnimation(sid)
 
+    -- 素早く閉じて開き直しても古いループが残らないよう、各ループは自分のセッションの間だけ動く
     CreateThread(function()
-        while isOpen do
+        while alive(sid) do
             SendNUIMessage({ action = 'gameTime', data = { h = GetClockHours(), m = GetClockMinutes() } })
             Wait(2000)
         end
@@ -193,10 +201,10 @@ local function openTablet(appId, standalone)
     -- QBCore 互換イベントには頼らず qbx_core の PlayerData を直接見る
     CreateThread(function()
         local last = groupKey()
-        while isOpen do
+        while alive(sid) do
             Wait(1000)
             local key = groupKey()
-            if isOpen and key ~= last then
+            if alive(sid) and key ~= last then
                 last = key
                 refreshCatalog()
             end
@@ -312,9 +320,12 @@ end)
 
 function refreshCatalog()
     if not isOpen then return end
+    local sid, standalone = sessionId, isStandalone
     -- 専用端末モードでは対象アプリを含むカタログを取り直す (消えていれば NUI 側で閉じる)
-    local data = lib.callback.await('cam_tablet:server:getData', false, standaloneApp, isStandalone)
-    if isStandalone and (not data or not data.device) then data = { catalog = {}, installed = {} } end
+    local data = lib.callback.await('cam_tablet:server:getData', false, standaloneApp, standalone)
+    -- 待っている間に閉じた / 別モードで開き直した場合、古い結果は捨てる
+    if not alive(sid) then return end
+    if standalone and (not data or not data.device) then data = { catalog = {}, installed = {} } end
     if data then
         SendNUIMessage({ action = 'catalog', data = { catalog = data.catalog, installed = data.installed, removed = data.removed, added = data.added } })
     end

@@ -19,7 +19,9 @@
     }
 
     T.registerApp('notes', {
-        mount(root) {
+        mount(root, ctx) {
+            // タブレットを閉じたら保留中の保存をすぐ送る (開き直した時のデータ取得より先に保存されるように)
+            ctx.on('visibility', (visible) => { if (!visible) save.flush(); });
             root.classList.add('app-notes');
             const limits = state.config.limits || { notes: 50, noteTitle: 60, noteBody: 4000 };
             let currentId = (sorted()[0] || {}).id || null;

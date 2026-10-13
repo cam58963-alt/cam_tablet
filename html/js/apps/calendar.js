@@ -9,7 +9,8 @@
     const COLORS = ['#ff453a', '#ff9f0a', '#30d158', '#0a84ff', '#bf5af2'];
 
     T.registerApp('calendar', {
-        mount(root) {
+        mount(root, ctx) {
+            ctx.on('visibility', (visible) => { if (!visible) save.flush(); });
             root.classList.add('app-calendar');
             const limits = state.config.limits || { events: 200, eventText: 100 };
             const today = new Date();

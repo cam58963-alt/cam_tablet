@@ -8,6 +8,15 @@
     function open(data) {
         data = data || {};
         const wasStandalone = state.standalone;
+
+        // 組み込みアプリはデータ (メモ・予定など) を差し替える前に一度閉じ、新しいデータで開き直す。
+        // 開いたままだと古いオブジェクトを編集し続け、保存から漏れる。閉じる時に保留中の保存も送られる。
+        let resumeId = null;
+        if (state.current && state.current.mod) {
+            if (!data.standalone && !wasStandalone && !data.openApp) resumeId = state.current.id;
+            T.closeApp(false);
+        }
+
         state.config = data.config || state.config || {};
         state.standalone = !!data.standalone && !!data.openApp;
         state.standaloneApp = state.standalone ? data.openApp : null;
@@ -28,8 +37,9 @@
         T.renderHome();
         T.show();
 
-        // 専用端末モード以外では、インストール済みのアプリだけを直接開ける
-        const target = data.openApp && T.getApp(data.openApp) && (state.standalone || T.isInstalled(data.openApp)) ? data.openApp : null;
+        // 専用端末モード以外では、インストール済みのアプリだけを直接開ける (指定が無ければ前回開いていた組み込みアプリを再開)
+        const requested = data.openApp || resumeId;
+        const target = requested && T.getApp(requested) && (state.standalone || T.isInstalled(requested)) ? requested : null;
         if (state.standalone && !target) {
             // 専用アプリが見つからない (登録元リソースが停止中など)
             T.requestClose();
