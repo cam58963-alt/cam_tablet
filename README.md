@@ -202,6 +202,65 @@ AddEventHandler('cam_tablet:client:appOpened', function(appId) end)
 AddEventHandler('cam_tablet:client:appClosed', function(appId) end)
 ```
 
+### 4. 職業・ギャングごとのアプリ（インストール / アンインストール）
+
+`RegisterApp` に `jobs` / `gangs` を指定すると、その職業・ギャングの人だけが使えるアプリになります。`config.lua` の `Config.Apps` でも同じ書き方ができます。
+
+```lua
+exports.cam_tablet:RegisterApp({
+    id = 'mdt',
+    label = 'MDT',
+    url = ('nui://%s/html/index.html'):format(GetCurrentResourceName()),
+    jobs = { police = 0, sheriff = 2 },  -- 職業名 = 必要な最低グレード
+    -- jobs = { 'police', 'sheriff' },   -- グレードを問わない場合は配列で書けます
+    -- gangs = { ballas = 0 },           -- jobs と gangs の両方を書いた場合は、どちらかを満たせば利用できます
+})
+```
+
+利用条件を満たしているかどうかで、次のように動きます。
+
+| 状態 | 動き |
+|---|---|
+| 条件を満たしている | App Store に表示され、インストールできます |
+| 条件を満たしていない | App Store に表示されません（`Config.HideRestrictedApps = false` の場合は鍵付きで表示され、インストールできません） |
+| 転職・降格・ギャング脱退で条件を満たさなくなった | **自動でアンインストール**されます。タイミングは次にタブレットを開いた時ですが、開いている最中の変更ならその場で削除されます。「利用条件を満たさなくなったため削除しました」と通知が出ます |
+| 専用端末アイテム（`deviceItem`）で開いた | 職業制限に関係なく、そのアプリだけ開けます |
+
+#### 就職したら自動でインストールしたい場合
+
+tablet 側にはこの機能がないので、外部スクリプト側で `InstallApp` を呼んでください。QBox は QBCore 互換のイベントを発火します。
+
+```lua
+-- server.lua
+local JOB_APPS = {
+    police = { 'mdt' },
+    ambulance = { 'ems_app' },
+}
+
+local function giveJobApps(src, job)
+    for _, appId in ipairs(JOB_APPS[job and job.name] or {}) do
+        if not exports.cam_tablet:HasApp(src, appId) then
+            exports.cam_tablet:InstallApp(src, appId)   -- 条件・必要アイテムのチェックなしでインストール
+            exports.cam_tablet:Notify(src, { title = 'App Store', message = '職業アプリを追加しました', app = appId })
+        end
+    end
+end
+
+-- 転職・昇格・降格した時
+AddEventHandler('QBCore:Server:OnJobUpdate', function(src, job)
+    giveJobApps(src, job)
+end)
+
+-- ログイン時 (既にその職業に就いている人向け)
+AddEventHandler('QBCore:Server:PlayerLoaded', function(player)
+    giveJobApps(player.PlayerData.source, player.PlayerData.job)
+end)
+```
+
+- **アンインストール:** 上の自動アンインストールに任せれば、外部スクリプト側で何か書く必要はありません。すぐに消したい場合は `exports.cam_tablet:UninstallApp(src, appId)` を呼んでください。
+- **注意:** `InstallApp` は条件をチェックしません。そのため、利用条件を満たしていない人に付与しても、次にタブレットを開いた時に自動で削除されます。
+- **セキュリティ:** タブレット側の職業制限は見た目と操作の制限です。iframe アプリのサーバー処理（`lib.callback` など）では、必ず自分でも職業をチェックしてください。
+
 ## Exports / イベント一覧
 
 ### サーバー
