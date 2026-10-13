@@ -107,9 +107,10 @@ local function registerApp(app, resource)
         return false
     end
     local existing = Catalog[app.id]
-    if existing and existing.resource ~= resource and existing.resource == GetCurrentResourceName() and not app.url then
-        -- 組み込みアプリを url 無しで上書きしようとした場合は拒否
-        lib.print.warn(('RegisterApp: %s tried to override built-in app %s'):format(resource, app.id))
+    if existing and existing.resource ~= resource then
+        -- 別のリソースが登録済みの ID は上書きさせない (他のアプリの URL を差し替えられないように)
+        -- 登録元が停止すればそのアプリは自動で消えるので、同じ ID はその後に登録できる
+        lib.print.warn(('RegisterApp: %s tried to override app %s owned by %s'):format(resource, app.id, existing.resource))
         return false
     end
 
@@ -553,6 +554,12 @@ lib.callback.register('cam_tablet:server:getData', function(src, appId, viaDevic
 
     local data, player, _, removed, added = getData(src)
     if not data then return false end
+
+    -- 初回はDB読み込みを待つので、その間にアイテムを手放していないか確認し直す
+    if device then
+        device = hasDeviceItem(src, appId)
+        if not device and not canOpen(src) then return false end
+    end
 
     return {
         device = device,

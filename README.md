@@ -132,6 +132,7 @@ exports.cam_tablet:RegisterAppItem('racing_tablet', 'racing')
 
 外部リソースは自分の NUI ページ（HTML）を用意し、`RegisterApp` で登録します。タブレット内では iframe として表示されます。
 登録したリソースが停止するとアプリは自動で消え、`cam_tablet` が再起動した時は `cam_tablet:ready` イベントで再登録できます。
+アプリの ID は登録したリソースのものになり、別のリソースから同じ ID で登録すると拒否されます（`config.lua` の組み込みアプリも上書きできません）。
 
 `examples/cam_tablet_example/` に動くサンプルがあります（**使う場合は `cam_tablet` の外の resources に移動してください**）。
 
