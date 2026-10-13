@@ -1,5 +1,5 @@
 local isOpen = false
-local isOpening = false
+local openingToken = nil -- 開く処理中の世代。nil なら開く処理は走っていない
 local isStandalone = false
 local openToken = 0 -- 開く処理の世代。閉じる/ログアウトで進め、待機中の古い open を無効にする
 local sessionId = 0 -- 開いている1回分のセッション。ループや非同期処理は自分のセッションが続いている間だけ動く
@@ -139,6 +139,8 @@ end
 
 local function closeTablet(fromUi)
     openToken = openToken + 1
+    -- 開く途中で閉じた場合も、すぐ次を開けるように開く処理中の印を外す
+    openingToken = nil
     if not isOpen then return end
     isOpen = false
     TriggerEvent('cam_tablet:client:closed')
@@ -151,7 +153,7 @@ end
 
 --- appId: 開くアプリ / standalone: 専用端末モード (ホーム無し) / viaDevice: 専用端末アイテムで開いた
 local function openTablet(appId, standalone, viaDevice)
-    if isOpening then return end
+    if openingToken then return end
 
     standalone = standalone == true and appId ~= nil
     viaDevice = (viaDevice == true or standalone) and appId ~= nil
@@ -169,11 +171,12 @@ local function openTablet(appId, standalone, viaDevice)
         return lib.notify({ description = Config.Locale.cannotUse, type = 'error' })
     end
 
-    isOpening = true
     openToken = openToken + 1
     local token = openToken
+    openingToken = token
     local data = lib.callback.await('cam_tablet:server:getData', false, appId, viaDevice)
-    isOpening = false
+    -- 自分の印のときだけ外す (取り消された後に新しく始まった開く処理の印は消さない)
+    if openingToken == token then openingToken = nil end
 
     -- 待っている間に Close() / ログアウトされたら開かない
     if token ~= openToken then return end
@@ -226,7 +229,7 @@ end
 
 -- コマンド / キー: 開いている、または開いている途中なら閉じる (途中で押し直したら開くのを取り消す)
 local function toggleTablet()
-    if isOpen or isOpening then
+    if isOpen or openingToken then
         closeTablet(false)
     else
         openTablet()

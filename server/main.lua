@@ -524,7 +524,8 @@ local function canOpen(src)
 end
 
 local function hasDeviceItem(src, appId)
-    if not appId then return false end
+    -- 対象アプリが存在しない (登録元が停止中など) なら許可しない
+    if not appId or not Catalog[appId] then return false end
     for item, entry in pairs(DeviceItems) do
         if entry.app == appId and itemCount(src, item) > 0 then return true end
     end
