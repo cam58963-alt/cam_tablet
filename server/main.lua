@@ -248,14 +248,32 @@ local function decode(str, fallback)
     return fallback
 end
 
+local SAVE_QUERY = 'INSERT INTO `cam_tablet` (`citizenid`, `apps`, `settings`, `notes`, `events`) VALUES (?, ?, ?, ?, ?) ' ..
+    'ON DUPLICATE KEY UPDATE `apps` = VALUES(`apps`), `settings` = VALUES(`settings`), `notes` = VALUES(`notes`), `events` = VALUES(`events`)'
+
+local Writing, PendingWrite = {}, {} -- citizenid -> true / 次に書き込むデータ
+
+-- 1キャラクターにつき書き込みは常に1本だけ。書き込み中の保存はまとめて、終わった後に最新の状態で1回書く
+-- (並列に投げると古いスナップショットが後から完了して新しい内容を上書きすることがある)
 local function persist(cid)
     local data = Cache[cid]
     if not data then return end
-    MySQL.query(
-        'INSERT INTO `cam_tablet` (`citizenid`, `apps`, `settings`, `notes`, `events`) VALUES (?, ?, ?, ?, ?) ' ..
-        'ON DUPLICATE KEY UPDATE `apps` = VALUES(`apps`), `settings` = VALUES(`settings`), `notes` = VALUES(`notes`), `events` = VALUES(`events`)',
-        { cid, json.encode(data.apps), json.encode(data.settings), json.encode(data.notes), json.encode(data.events) }
-    )
+    if Writing[cid] then
+        PendingWrite[cid] = data
+        return
+    end
+
+    Writing[cid] = true
+    CreateThread(function()
+        while data do
+            local ok, err = pcall(MySQL.query.await, SAVE_QUERY,
+                { cid, json.encode(data.apps), json.encode(data.settings), json.encode(data.notes), json.encode(data.events) })
+            if not ok then lib.print.error(('failed to save %s: %s'):format(cid, err)) end
+            data = PendingWrite[cid]
+            PendingWrite[cid] = nil
+        end
+        Writing[cid] = nil
+    end)
 end
 
 local function loadData(cid)

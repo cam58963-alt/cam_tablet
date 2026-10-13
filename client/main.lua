@@ -1,6 +1,7 @@
 local isOpen = false
 local isOpening = false
 local isStandalone = false
+local openToken = 0 -- 開く処理の世代。閉じる/ログアウトで進め、待機中の古い open を無効にする
 local standaloneApp
 local refreshCatalog -- 下で定義
 local tabletProp
@@ -122,6 +123,7 @@ end
 ---------------------------------------------------------------------
 
 local function closeTablet(fromUi)
+    openToken = openToken + 1
     if not isOpen then return end
     isOpen = false
     TriggerEvent('cam_tablet:client:closed')
@@ -151,8 +153,13 @@ local function openTablet(appId, standalone)
     end
 
     isOpening = true
+    openToken = openToken + 1
+    local token = openToken
     local data = lib.callback.await('cam_tablet:server:getData', false, appId, standalone)
     isOpening = false
+
+    -- 待っている間に Close() / ログアウトされたら開かない
+    if token ~= openToken then return end
 
     if not data then
         return lib.notify({ description = Config.Locale.noTablet, type = 'error' })
