@@ -92,6 +92,12 @@ local function registerDeviceItem(item, appId, resource)
     return true
 end
 
+-- iframe の URL からページを持っているリソース名を取り出す (SDK の CamTablet.post() の送信先)
+local function urlResource(url)
+    if type(url) ~= 'string' then return nil end
+    return url:match('^nui://([^/]+)/') or url:match('^https?://cfx%-nui%-([^/]+)/')
+end
+
 local function registerApp(app, resource)
     if type(app) ~= 'table' or type(app.id) ~= 'string' or not app.id:match('^[%w_%-]+$') then
         lib.print.warn(('RegisterApp: invalid app id (%s) from %s'):format(tostring(app and app.id), resource))
@@ -124,7 +130,8 @@ local function registerApp(app, resource)
         gangs = normalizeGroups(app.gangs),
         item = app.item,
         consumeItem = app.consumeItem == true,
-        resource = resource,
+        resource = resource, -- 登録元 (停止時に自動削除する対象)
+        uiResource = urlResource(app.url) or resource,
     }
 
     if not Catalog[entry.id] then
@@ -207,7 +214,7 @@ local function buildCatalog(src, player, forceId)
                 itemLabel = app.item and itemLabel(app.item) or nil,
                 hasItem = app.item and itemCount(src, app.item) > 0 or nil,
                 consumeItem = app.consumeItem or nil,
-                resource = app.resource,
+                resource = app.uiResource,
             }
         end
     end

@@ -111,8 +111,10 @@
                     T.requestClose();
                     break;
                 }
-                if (state.current && !state.standalone && !T.isInstalled(state.current.id) && !T.getApp(state.current.id)?.system) {
-                    T.closeApp(true);
+                if (state.current && !state.standalone) {
+                    const cur = T.getApp(state.current.id);
+                    // 削除された / 利用条件を満たさなくなった (system + jobs のアプリは削除されずロックになる) アプリは閉じる
+                    if (!cur || cur.locked || (!T.isInstalled(cur.id) && !cur.system)) T.closeApp(true);
                 }
                 T.renderHome();
                 T.emit('installed');
