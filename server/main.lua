@@ -1,7 +1,6 @@
 local Catalog, CatalogOrder = {}, {}
 local DeviceItems = {}  -- item -> { app = appId, resource = resource }  (アプリ専用端末アイテム)
 local Cache = {}       -- citizenid -> { apps, settings, notes, events }
-local SourceCid = {}   -- source -> citizenid
 
 ---------------------------------------------------------------------
 -- Utils
@@ -261,11 +260,21 @@ local SAVE_QUERY = 'INSERT INTO `cam_tablet` (`citizenid`, `apps`, `settings`, `
 
 local Writing, PendingWrite = {}, {} -- citizenid -> true / 次に書き込むデータ
 local LastWriteOk = {}                -- citizenid -> 直近の書き込みが成功したか
+local EvictAfterWrite = {}            -- citizenid -> 書き込み完了後にキャッシュを破棄する
+local SourceCid = {}                  -- source -> citizenid
+
+local function isActive(cid)
+    for _, active in pairs(SourceCid) do
+        if active == cid then return true end
+    end
+    return false
+end
 
 -- 1キャラクターにつき書き込みは常に1本だけ。書き込み中の保存はまとめて、終わった後に最新の状態で1回書く
 -- (並列に投げると古いスナップショットが後から完了して新しい内容を上書きすることがある)
-local function persist(cid)
-    local data = Cache[cid]
+--- data を省略するとキャッシュの内容を保存する (キャッシュ破棄後でも手元のデータを確実に保存できるよう指定可能)
+local function persist(cid, data)
+    data = data or Cache[cid]
     if not data then return end
     if Writing[cid] then
         PendingWrite[cid] = data
@@ -283,12 +292,27 @@ local function persist(cid)
             PendingWrite[cid] = nil
         end
         Writing[cid] = nil
+        -- ログアウト済みなら、書き込みが終わってからキャッシュを破棄する (途中で消すと再ログイン時に古いDBを読む)
+        if EvictAfterWrite[cid] then
+            EvictAfterWrite[cid] = nil
+            if not isActive(cid) then Cache[cid] = nil end
+        end
     end)
 end
 
+--- キャラクターのキャッシュを破棄する。書き込み中なら完了後に破棄する
+local function evict(cid)
+    if not cid then return end
+    if Writing[cid] then
+        EvictAfterWrite[cid] = true
+    else
+        Cache[cid] = nil
+    end
+end
+
 --- 保存して書き込み完了まで待つ。成功したら true (アイテム消費など取り消せない処理の前に使う)
-local function persistAwait(cid)
-    persist(cid)
+local function persistAwait(cid, data)
+    persist(cid, data)
     while Writing[cid] do Wait(50) end
     return LastWriteOk[cid] == true
 end
@@ -359,7 +383,11 @@ local function getData(src)
     local player = getPlayer(src)
     if not player then return end
     local cid = player.PlayerData.citizenid
+    -- 切断せずにキャラクターを切り替えた場合、前のキャラクターのキャッシュを破棄する
+    local previous = SourceCid[src]
     SourceCid[src] = cid
+    if previous and previous ~= cid then evict(previous) end
+    EvictAfterWrite[cid] = nil
     local data = loadData(cid)
     ensureSystemApps(data, cid)
     local removed = pruneRestrictedApps(data, player, cid)
@@ -367,11 +395,15 @@ local function getData(src)
     return data, player, cid, removed, added
 end
 
-AddEventHandler('playerDropped', function()
-    local cid = SourceCid[source]
-    SourceCid[source] = nil
-    if cid then Cache[cid] = nil end
-end)
+local function onPlayerLeft(src)
+    local cid = SourceCid[src]
+    SourceCid[src] = nil
+    evict(cid)
+end
+
+AddEventHandler('playerDropped', function() onPlayerLeft(source) end)
+-- キャラクター選択に戻った時 (QBox 本体のイベント)
+AddEventHandler('qbx_core:server:playerLoggedOut', onPlayerLeft)
 
 ---------------------------------------------------------------------
 -- Validation
@@ -553,9 +585,15 @@ local function installApp(src, appId, force)
         local function rollback()
             local idx = contains(data.apps, appId)
             if idx then table.remove(data.apps, idx) end
-            persist(cid)
+            persist(cid, data)
         end
-        if not persistAwait(cid) then
+        if not persistAwait(cid, data) then
+            rollback()
+            return result(false, Config.Locale.saveFailed)
+        end
+        -- 保存を待っている間にログアウト / 切断して別キャラクターになっていたら消費しない
+        local current = getPlayer(src)
+        if not current or current.PlayerData.citizenid ~= cid then
             rollback()
             return result(false, Config.Locale.saveFailed)
         end
