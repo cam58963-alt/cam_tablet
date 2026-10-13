@@ -610,6 +610,11 @@ local function installApp(src, appId, force)
             rollback()
             return result(false, Config.Locale.saveFailed)
         end
+        -- 待っている間にアプリが削除 / 差し替え / アンインストールされていたら消費しない
+        if Catalog[appId] ~= app or not contains(data.apps, appId) then
+            rollback()
+            return result(false, Config.Locale.notFound)
+        end
         if not exports.ox_inventory:RemoveItem(src, app.item, 1) then
             rollback()
             return result(false, Config.Locale.needItem:format(itemLabel(app.item)))
@@ -762,6 +767,11 @@ local function purgeInstalls(appId)
             'WHERE JSON_VALID(`apps`) AND JSON_SEARCH(`apps`, \'one\', ?) IS NOT NULL',
             { pattern, pattern })
         if not ok then lib.print.error(('failed to purge installs of %s: %s'):format(appId, err)) end
+        -- 掃除中に同じIDで再登録・再インストールされていた場合、UPDATE が後から消してしまうので
+        -- ログイン中キャラクター (キャッシュが正) は書き戻す
+        for cid, data in pairs(Cache) do
+            if contains(data.apps, appId) then persist(cid) end
+        end
     end)
 end
 
@@ -824,7 +834,10 @@ AddEventHandler('onResourceStop', function(resource)
         end
     end
     for item, entry in pairs(DeviceItems) do
-        if entry.resource == resource then DeviceItems[item] = nil end
+        if entry.resource == resource then
+            DeviceItems[item] = nil
+            changed = true -- 開いている専用端末の許可も取り直させる
+        end
     end
     if changed then catalogChanged() end
 end)
