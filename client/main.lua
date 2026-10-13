@@ -2,6 +2,7 @@ local isOpen = false
 local isOpening = false
 local isStandalone = false
 local standaloneApp
+local refreshCatalog -- 下で定義
 local tabletProp
 
 ---------------------------------------------------------------------
@@ -81,6 +82,12 @@ local function getProfile()
         cash = money.cash or 0,
         bank = money.bank or 0,
     }
+end
+
+local function groupKey()
+    local pd = exports.qbx_core:GetPlayerData() or {}
+    local job, gang = pd.job or {}, pd.gang or {}
+    return ('%s:%s|%s:%s'):format(job.name, job.grade and job.grade.level, gang.name, gang.grade and gang.grade.level)
 end
 
 local function uiConfig()
@@ -172,6 +179,20 @@ local function openTablet(appId, standalone)
         while isOpen do
             SendNUIMessage({ action = 'gameTime', data = { h = GetClockHours(), m = GetClockMinutes() } })
             Wait(2000)
+        end
+    end)
+
+    -- 開いている間に職業/ギャング (グレード含む) が変わったら、アプリの自動インストール/削除を反映する
+    -- QBCore 互換イベントには頼らず qbx_core の PlayerData を直接見る
+    CreateThread(function()
+        local last = groupKey()
+        while isOpen do
+            Wait(1000)
+            local key = groupKey()
+            if isOpen and key ~= last then
+                last = key
+                refreshCatalog()
+            end
         end
     end)
 end
@@ -282,21 +303,17 @@ RegisterNetEvent('cam_tablet:client:notify', function(notification)
     SendNUIMessage({ action = 'notify', data = notification })
 end)
 
-local function refreshCatalog()
+function refreshCatalog()
     if not isOpen then return end
     -- 専用端末モードでは対象アプリを含むカタログを取り直す (消えていれば NUI 側で閉じる)
     local data = lib.callback.await('cam_tablet:server:getData', false, standaloneApp, isStandalone)
     if isStandalone and (not data or not data.device) then data = { catalog = {}, installed = {} } end
     if data then
-        SendNUIMessage({ action = 'catalog', data = { catalog = data.catalog, installed = data.installed, removed = data.removed } })
+        SendNUIMessage({ action = 'catalog', data = { catalog = data.catalog, installed = data.installed, removed = data.removed, added = data.added } })
     end
 end
 
 RegisterNetEvent('cam_tablet:client:catalogChanged', refreshCatalog)
-
--- 開いている間に職業/ギャングが変わったら、利用できなくなったアプリを反映する
-RegisterNetEvent('QBCore:Client:OnJobUpdate', refreshCatalog)
-RegisterNetEvent('QBCore:Client:OnGangUpdate', refreshCatalog)
 
 local function onUnload()
     closeTablet(false)
@@ -304,7 +321,6 @@ local function onUnload()
 end
 
 RegisterNetEvent('qbx_core:client:playerLoggedOut', onUnload)
-RegisterNetEvent('QBCore:Client:OnPlayerUnload', onUnload)
 
 AddEventHandler('onResourceStop', function(resource)
     if resource ~= GetCurrentResourceName() then return end

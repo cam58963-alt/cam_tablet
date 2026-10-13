@@ -254,6 +254,9 @@
         T.emit('catalog');
     };
 
+    // 手動でアンインストールできるか (system / autoInstall は不可)
+    T.isRemovable = (app) => !!app && !app.system && !app.autoInstall;
+
     T.storageUsed = () => T.state.installed.reduce((sum, id) => sum + ((T.getApp(id) || {}).size || 0), 0);
 
     /* ---------- Settings ---------- */

@@ -81,7 +81,8 @@ Config.StorageMB = 32768
     category    : ストアのカテゴリ
     developer   : 開発元 (表示用)
     size        : サイズ MB (表示/ダウンロード演出用)
-    system      : true でアンインストール不可
+    system      : true で全員にインストール済み & アンインストール不可
+    autoInstall : true で利用条件 (jobs/gangs) を満たす人に自動インストール & 削除不可。条件を外れると自動で削除
     featured    : true でストアのおすすめに表示
     url         : 外部アプリ (iframe) のURL  例: 'nui://my_resource/html/index.html'
                   ※ 外部スクリプトからは exports.cam_tablet:RegisterApp でも追加できます (README 参照)
@@ -213,6 +214,6 @@ Config.Locale = {
     noAccess = 'このアプリを利用する権限がありません',
     needItem = 'インストールには %s が必要です',
     already = '既にインストールされています',
-    system = 'システムアプリは削除できません',
+    system = 'このアプリは削除できません',
     keybind = 'タブレットを開く',
 }

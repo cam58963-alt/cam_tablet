@@ -50,19 +50,17 @@
 
         T.emit('open');
         state.ready = true;
-        notifyRemoved(data.removed);
+        notifyChanges(data);
     }
 
-    // 職業変更などで自動アンインストールされたアプリを通知
-    function notifyRemoved(removed) {
-        if (!Array.isArray(removed) || !removed.length) return;
-        T.notify({
-            title: 'App Store',
-            message: `利用条件を満たさなくなったため削除しました: ${removed.join('、')}`,
-            icon: 'fa-solid fa-trash',
-            color: '#8e8e93',
-            silentBadge: true,
-        });
+    // 職業変更などで自動インストール / アンインストールされたアプリを通知
+    function notifyChanges({ added, removed } = {}) {
+        if (Array.isArray(added) && added.length) {
+            T.notify({ title: 'App Store', message: `アプリを追加しました: ${added.join('、')}`, icon: 'fa-solid fa-circle-down', color: '#0a84ff', silentBadge: true });
+        }
+        if (Array.isArray(removed) && removed.length) {
+            T.notify({ title: 'App Store', message: `利用条件を満たさなくなったため削除しました: ${removed.join('、')}`, icon: 'fa-solid fa-trash', color: '#8e8e93', silentBadge: true });
+        }
     }
 
     function reset() {
@@ -118,7 +116,7 @@
                 }
                 T.renderHome();
                 T.emit('installed');
-                notifyRemoved(d.data.removed);
+                notifyChanges(d.data);
                 break;
             case 'appMessage':
                 T.sendToApp(d.app, d.data);

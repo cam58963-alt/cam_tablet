@@ -140,7 +140,7 @@
                             h('div', { class: 'detail-dev' }, app.developer),
                             h('div', { class: 'detail-actions' },
                                 actionButton(app, { big: true }),
-                                T.isInstalled(app.id) && !app.system
+                                T.isInstalled(app.id) && T.isRemovable(app)
                                     ? h('button', { class: 'store-btn danger', onClick: () => T.uninstallApp(app.id) }, T.icon('fa-solid fa-trash'))
                                     : null))),
                     h('div', { class: 'detail-stats' },
@@ -155,6 +155,7 @@
                         ? h('div', { class: 'notice warn' }, T.icon('fa-solid fa-box'), ` インストールには「${app.itemLabel || app.item}」が必要です。`)
                         : null,
                     app.system ? h('div', { class: 'notice' }, T.icon('fa-solid fa-shield'), ' システムアプリのため削除できません。') : null,
+                    app.autoInstall && !app.system ? h('div', { class: 'notice' }, T.icon('fa-solid fa-briefcase'), ' 利用条件を満たしている間は自動でインストールされ、削除できません。') : null,
                     h('h2', null, '情報'),
                     h('div', { class: 'info-table' }, rows.map(([k, v]) => h('div', { class: 'info-row' }, h('span', null, k), h('span', null, v))))));
             }

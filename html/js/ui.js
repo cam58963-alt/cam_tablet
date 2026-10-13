@@ -119,7 +119,7 @@
             T.appIcon(app),
             badge ? h('span', { class: 'badge' }, badge > 99 ? '99+' : badge) : null,
             progress != null ? h('div', { class: 'dl-ring', style: { '--p': progress } }) : null,
-            !app.system && progress == null ? h('button', {
+            T.isRemovable(app) && progress == null ? h('button', {
                 class: 'del-badge',
                 title: '削除',
                 onPointerdown: (e) => e.stopPropagation(),
@@ -328,7 +328,7 @@
             h('div', { class: 'cm-head' }, T.appIcon(app, 'small'), h('span', null, app.label)),
             h('button', { onClick: () => { hideContextMenu(); T.openApp(app.id); } }, T.icon('fa-solid fa-arrow-up-right-from-square'), ' 開く'),
             h('button', { onClick: () => { hideContextMenu(); T.enterEditMode(); } }, T.icon('fa-solid fa-table-cells'), ' ホーム画面を編集'),
-            app.system ? null : h('button', { class: 'danger', onClick: () => { hideContextMenu(); T.uninstallApp(app.id); } },
+            !T.isRemovable(app) ? null : h('button', { class: 'danger', onClick: () => { hideContextMenu(); T.uninstallApp(app.id); } },
                 T.icon('fa-solid fa-trash'), ' アプリを削除'),
         );
         menu.classList.remove('hidden');
@@ -549,7 +549,7 @@
 
     T.uninstallApp = async function uninstallApp(id) {
         const app = T.getApp(id);
-        if (!app || app.system) return false;
+        if (!T.isRemovable(app)) return false;
         const ok = await T.confirm({
             title: `「${app.label}」を削除しますか？`,
             message: 'このアプリは App Store から再ダウンロードできます。',

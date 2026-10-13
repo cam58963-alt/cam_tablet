@@ -125,6 +125,7 @@ local function registerApp(app, resource)
         size = tonumber(app.size) or 10,
         url = app.url,
         system = app.system == true,
+        autoInstall = app.autoInstall == true,
         featured = app.featured == true,
         jobs = normalizeGroups(app.jobs),
         gangs = normalizeGroups(app.gangs),
@@ -207,6 +208,7 @@ local function buildCatalog(src, player, forceId)
                 size = app.size,
                 url = app.url,
                 system = app.system,
+                autoInstall = app.autoInstall or nil,
                 featured = app.featured,
                 locked = not access,
                 groups = groupNames(app.jobs) or groupNames(app.gangs),
@@ -290,6 +292,20 @@ local function ensureSystemApps(data, cid)
     if changed then persist(cid) end
 end
 
+-- autoInstall = true のアプリは、利用条件を満たしている人に自動でインストールする
+local function installAutoApps(data, player, cid)
+    local added = {}
+    for i = 1, #CatalogOrder do
+        local app = Catalog[CatalogOrder[i]]
+        if app.autoInstall and not contains(data.apps, app.id) and hasAccess(player, app) then
+            data.apps[#data.apps + 1] = app.id
+            added[#added + 1] = app.label
+        end
+    end
+    if #added > 0 then persist(cid) end
+    return added
+end
+
 -- 職業/ギャング変更などで利用条件を満たさなくなったアプリは自動でアンインストールする
 local function pruneRestrictedApps(data, player, cid)
     local removed = {}
@@ -312,7 +328,8 @@ local function getData(src)
     local data = loadData(cid)
     ensureSystemApps(data, cid)
     local removed = pruneRestrictedApps(data, player, cid)
-    return data, player, cid, removed
+    local added = installAutoApps(data, player, cid)
+    return data, player, cid, removed, added
 end
 
 AddEventHandler('playerDropped', function()
@@ -454,12 +471,13 @@ lib.callback.register('cam_tablet:server:getData', function(src, appId, viaDevic
     local device = viaDevice == true and hasDeviceItem(src, appId)
     if not device and not canOpen(src) then return false end
 
-    local data, player, _, removed = getData(src)
+    local data, player, _, removed, added = getData(src)
     if not data then return false end
 
     return {
         device = device,
         removed = #removed > 0 and removed or nil,
+        added = #added > 0 and added or nil,
         catalog = buildCatalog(src, player, device and appId or nil),
         installed = filterInstalled(data.apps),
         settings = data.settings,
@@ -511,7 +529,7 @@ lib.callback.register('cam_tablet:server:uninstall', function(src, appId)
     if not data or type(appId) ~= 'string' then return result(false, Config.Locale.notFound) end
 
     local app = Catalog[appId]
-    if app and app.system then return result(false, Config.Locale.system) end
+    if app and (app.system or app.autoInstall) then return result(false, Config.Locale.system) end
 
     local idx = contains(data.apps, appId)
     if idx then

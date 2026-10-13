@@ -280,8 +280,8 @@
                                 T.appIcon(a, 'small'),
                                 h('div', { class: 'set-label' }, a.label, h('small', null, `${a.category} ・ ${a.size} MB`)),
                                 h('div', { class: 'set-control' },
-                                    a.system
-                                        ? h('span', { class: 'set-value' }, 'システム')
+                                    !T.isRemovable(a)
+                                        ? h('span', { class: 'set-value' }, a.system ? 'システム' : '自動')
                                         : h('button', { class: 'btn btn-sm', onClick: () => T.uninstallApp(a.id) }, '削除'))))),
                         h('button', { class: 'btn btn-primary', onClick: () => T.openApp('store') }, T.icon('fa-solid fa-bag-shopping'), h('span', null, 'App Store を開く')),
                     ];

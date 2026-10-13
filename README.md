@@ -97,6 +97,7 @@ QBox (qbx_core) 用のタブレット UI リソースです。
     consumeItem = true,            -- インストール時にアイテムを消費
     deviceItem = 'police_tablet',  -- このアプリの専用端末アイテム
     system = false,                -- true で全員インストール済み & 削除不可
+    autoInstall = false,           -- true で条件 (jobs/gangs) を満たす人に自動インストール & 削除不可
     featured = false,              -- ストアのおすすめに表示
 }
 ```
@@ -223,42 +224,29 @@ exports.cam_tablet:RegisterApp({
 |---|---|
 | 条件を満たしている | App Store に表示され、インストールできます |
 | 条件を満たしていない | App Store に表示されません（`Config.HideRestrictedApps = false` の場合は鍵付きで表示され、インストールできません） |
-| 転職・降格・ギャング脱退で条件を満たさなくなった | **自動でアンインストール**されます。タイミングは次にタブレットを開いた時ですが、開いている最中の変更ならその場で削除されます。「利用条件を満たさなくなったため削除しました」と通知が出ます |
+| 転職・降格・ギャング脱退で条件を満たさなくなった | **自動でアンインストール**されます。タイミングは次にタブレットを開いた時ですが、開いている最中の変更なら1秒以内に削除されます。「利用条件を満たさなくなったため削除しました」と通知が出ます |
 | 専用端末アイテム（`deviceItem`）で開いた | 職業制限に関係なく、そのアプリだけ開けます |
 
 #### 就職したら自動でインストールしたい場合
 
-tablet 側にはこの機能がないので、外部スクリプト側で `InstallApp` を呼んでください。QBox は QBCore 互換のイベントを発火します。
+`autoInstall = true` を付けると、利用条件を満たしている人には自動でインストールされ、条件を外れると自動で削除されます。外部スクリプト側でイベントを書く必要はありません。
 
 ```lua
--- server.lua
-local JOB_APPS = {
-    police = { 'mdt' },
-    ambulance = { 'ems_app' },
-}
-
-local function giveJobApps(src, job)
-    for _, appId in ipairs(JOB_APPS[job and job.name] or {}) do
-        if not exports.cam_tablet:HasApp(src, appId) then
-            exports.cam_tablet:InstallApp(src, appId)   -- 条件・必要アイテムのチェックなしでインストール
-            exports.cam_tablet:Notify(src, { title = 'App Store', message = '職業アプリを追加しました', app = appId })
-        end
-    end
-end
-
--- 転職・昇格・降格した時
-AddEventHandler('QBCore:Server:OnJobUpdate', function(src, job)
-    giveJobApps(src, job)
-end)
-
--- ログイン時 (既にその職業に就いている人向け)
-AddEventHandler('QBCore:Server:PlayerLoaded', function(player)
-    giveJobApps(player.PlayerData.source, player.PlayerData.job)
-end)
+exports.cam_tablet:RegisterApp({
+    id = 'mdt',
+    label = 'MDT',
+    url = ('nui://%s/html/index.html'):format(GetCurrentResourceName()),
+    jobs = { police = 0 },
+    autoInstall = true,   -- 警察になったら自動インストール / 辞めたら自動削除
+})
 ```
 
+- 反映されるタイミングは、タブレットを開いた時と、開いている間に職業・ギャング・グレードが変わった時（1秒以内）です。
+- `autoInstall` のアプリは、条件を満たしている間は手動で削除できません。
+- 条件を満たした人に個別に付与したい場合は `exports.cam_tablet:InstallApp(src, appId)` を使ってください。
+
 - **アンインストール:** 上の自動アンインストールに任せれば、外部スクリプト側で何か書く必要はありません。すぐに消したい場合は `exports.cam_tablet:UninstallApp(src, appId)` を呼んでください。
-- **注意:** `InstallApp` は条件をチェックしません。そのため、利用条件を満たしていない人に付与しても、次にタブレットを開いた時に自動で削除されます。
+- **注意:** `InstallApp` は利用条件をチェックしません。そのため、条件を満たしていない人に付与しても、次にタブレットを開いた時に自動で削除されます。
 - **セキュリティ:** タブレット側の職業制限は見た目と操作の制限です。iframe アプリのサーバー処理（`lib.callback` など）では、必ず自分でも職業をチェックしてください。
 
 ## Exports / イベント一覧
