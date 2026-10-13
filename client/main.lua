@@ -224,6 +224,15 @@ local function openTablet(appId, standalone, viaDevice)
     end)
 end
 
+-- コマンド / キー: 開いている、または開いている途中なら閉じる (途中で押し直したら開くのを取り消す)
+local function toggleTablet()
+    if isOpen or isOpening then
+        closeTablet(false)
+    else
+        openTablet()
+    end
+end
+
 RegisterNetEvent('cam_tablet:client:open', function(appId, standalone, viaDevice)
     openTablet(appId, standalone, viaDevice)
 end)
@@ -234,7 +243,7 @@ end)
 
 if Config.Command then
     RegisterCommand(Config.Command, function()
-        if isOpen then closeTablet(false) else openTablet() end
+        toggleTablet()
     end, false)
 end
 
@@ -244,7 +253,7 @@ if Config.Keybind then
         description = Config.Locale.keybind,
         defaultKey = Config.Keybind,
         onPressed = function()
-            if isOpen then closeTablet(false) else openTablet() end
+            toggleTablet()
         end,
     })
 end

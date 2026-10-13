@@ -580,7 +580,9 @@
             danger: true,
         });
         if (!ok) return false;
+        const gen = state.sessionGen;
         const res = await T.nui('uninstall', { id });
+        if (gen !== state.sessionGen) return false; // ログアウトをまたいだ古い応答は捨てる
         if (res && res.ok) {
             state.installed = res.installed || state.installed.filter((a) => a !== id);
             if (state.current && state.current.id === id) closeCurrent(true);

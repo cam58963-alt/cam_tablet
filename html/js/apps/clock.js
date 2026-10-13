@@ -9,6 +9,14 @@
     const sw = { running: false, start: 0, elapsed: 0, laps: [] };
     const timer = { running: false, end: 0, remaining: 0, total: 0, set: 5 * 60 * 1000, handle: null };
 
+    // ログアウト (キャラクター切り替え) でタイマー・ストップウォッチを止めて消す。普通に閉じた時は動き続ける
+    T.on('reset', () => {
+        clearInterval(timer.handle);
+        Object.assign(timer, { running: false, end: 0, remaining: 0, total: 0, handle: null });
+        Object.assign(sw, { running: false, start: 0, elapsed: 0, laps: [] });
+        T.emit('timer');
+    });
+
     function swTime() {
         return sw.elapsed + (sw.running ? performance.now() - sw.start : 0);
     }

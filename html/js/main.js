@@ -82,6 +82,8 @@
         state.badges = {};
         T.cancelDownloads();
         T.beginSettingsSession(); // 前のキャラクターの保存待ち・送信中の設定を新しいキャラクターに持ち込まない
+        state.sessionGen += 1;
+        T.emit('reset'); // タイマーなどキャラクター単位の状態を消す
         state.ready = false;
     }
 

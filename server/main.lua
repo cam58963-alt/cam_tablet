@@ -234,8 +234,10 @@ end
 -- Persistence
 ---------------------------------------------------------------------
 
+local dbReady = false
+
 CreateThread(function()
-    MySQL.query.await([[
+    local ok, err = pcall(MySQL.query.await, [[
         CREATE TABLE IF NOT EXISTS `cam_tablet` (
             `citizenid` VARCHAR(50) NOT NULL,
             `apps` LONGTEXT NULL,
@@ -246,6 +248,9 @@ CreateThread(function()
             PRIMARY KEY (`citizenid`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ]])
+    if not ok then lib.print.error(('failed to create table: %s'):format(err)) end
+    -- 失敗してもリクエストを待たせ続けないよう準備完了にする (エラーは各クエリ側でも出る)
+    dbReady = true
 end)
 
 local function decode(str, fallback)
@@ -318,6 +323,9 @@ local function persistAwait(cid, data)
 end
 
 local function loadData(cid)
+    if Cache[cid] then return Cache[cid] end
+    -- 初回起動時はテーブル作成が終わるまで待つ
+    while not dbReady do Wait(50) end
     if Cache[cid] then return Cache[cid] end
 
     local row = MySQL.single.await('SELECT `apps`, `settings`, `notes`, `events` FROM `cam_tablet` WHERE `citizenid` = ?', { cid })
@@ -732,9 +740,34 @@ exports('GetApps', function()
     return list
 end)
 
+-- 明示的に削除したアプリは、全プレイヤーのインストール済みからも消す
+-- (同じIDで再登録した時に、必要アイテムなどの条件を通らずにインストール済み扱いにならないように)
+-- ※ リソース停止による一時的な削除ではインストール済みのまま残す
+local function purgeInstalls(appId)
+    for cid, data in pairs(Cache) do
+        local idx = contains(data.apps, appId)
+        if idx then
+            table.remove(data.apps, idx)
+            persist(cid)
+        end
+    end
+    CreateThread(function()
+        while not dbReady do Wait(50) end
+        local pattern = appId:gsub('[_%%\\]', '\\%0') -- JSON_SEARCH のワイルドカードをエスケープ
+        local ok, err = pcall(MySQL.query.await,
+            'UPDATE `cam_tablet` SET `apps` = JSON_REMOVE(`apps`, JSON_UNQUOTE(JSON_SEARCH(`apps`, \'one\', ?))) ' ..
+            'WHERE JSON_VALID(`apps`) AND JSON_SEARCH(`apps`, \'one\', ?) IS NOT NULL',
+            { pattern, pattern })
+        if not ok then lib.print.error(('failed to purge installs of %s: %s'):format(appId, err)) end
+    end)
+end
+
 exports('RemoveApp', function(appId)
     local ok = removeApp(appId)
-    if ok then catalogChanged() end
+    if ok then
+        purgeInstalls(appId)
+        catalogChanged()
+    end
     return ok
 end)
 

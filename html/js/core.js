@@ -47,6 +47,7 @@
             standalone: false,
             standaloneApp: null,
             deviceApp: null, // 専用端末アイテムで許可されたアプリ (未インストール・職業制限でも開ける)
+            sessionGen: 0, // ログアウトで進む。前のキャラクターの非同期応答を捨てるために使う
             locked: false,
             pendingApp: null,
             current: null, // { id, win, mod, iframe, offs }
