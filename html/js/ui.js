@@ -523,7 +523,15 @@
 
     /* ================= Install / Uninstall ================= */
 
+    // ログアウトなどでセッションが変わったら進行中のダウンロードを無効にする
+    let downloadGen = 0;
+    T.cancelDownloads = function cancelDownloads() {
+        downloadGen += 1;
+        state.downloads = {};
+    };
+
     T.downloadApp = function downloadApp(id) {
+        const gen = downloadGen;
         const app = T.getApp(id);
         if (!app || T.isInstalled(id) || state.downloads[id] != null) return;
         const cfg = state.config.download || { msPerMB: 60, min: 1200, max: 8000 };
@@ -534,6 +542,7 @@
         T.emit('downloads');
 
         const step = () => {
+            if (gen !== downloadGen) return; // 取り消された (別キャラクターに入らないように)
             const p = Math.min(1, (performance.now() - started) / duration);
             state.downloads[id] = p;
             document.querySelectorAll(`[data-app="${CSS.escape(id)}"] .dl-ring`).forEach((r) => r.style.setProperty('--p', p));
@@ -543,6 +552,7 @@
                 return;
             }
             T.nui('install', { id }).then((res) => {
+                if (gen !== downloadGen) return;
                 delete state.downloads[id];
                 if (res && res.ok) {
                     state.installed = res.installed || [...state.installed, id];

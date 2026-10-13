@@ -141,6 +141,10 @@ local function registerApp(app, resource)
     Catalog[entry.id] = entry
 
     -- deviceItem = 'racing_tablet' または { 'a', 'b' } でアプリ専用アイテムを登録
+    -- 再登録時は、同じ登録元が以前付けた紐付けを消してから付け直す (deviceItem を外した / 変えた場合に古いアイテムが残らないように)
+    for item, dev in pairs(DeviceItems) do
+        if dev.app == entry.id and dev.resource == resource then DeviceItems[item] = nil end
+    end
     local devices = app.deviceItem
     if type(devices) == 'string' then devices = { devices } end
     if type(devices) == 'table' then
@@ -256,6 +260,7 @@ local SAVE_QUERY = 'INSERT INTO `cam_tablet` (`citizenid`, `apps`, `settings`, `
     'ON DUPLICATE KEY UPDATE `apps` = VALUES(`apps`), `settings` = VALUES(`settings`), `notes` = VALUES(`notes`), `events` = VALUES(`events`)'
 
 local Writing, PendingWrite = {}, {} -- citizenid -> true / 次に書き込むデータ
+local LastWriteOk = {}                -- citizenid -> 直近の書き込みが成功したか
 
 -- 1キャラクターにつき書き込みは常に1本だけ。書き込み中の保存はまとめて、終わった後に最新の状態で1回書く
 -- (並列に投げると古いスナップショットが後から完了して新しい内容を上書きすることがある)
@@ -273,11 +278,19 @@ local function persist(cid)
             local ok, err = pcall(MySQL.query.await, SAVE_QUERY,
                 { cid, json.encode(data.apps), json.encode(data.settings), json.encode(data.notes), json.encode(data.events) })
             if not ok then lib.print.error(('failed to save %s: %s'):format(cid, err)) end
+            LastWriteOk[cid] = ok
             data = PendingWrite[cid]
             PendingWrite[cid] = nil
         end
         Writing[cid] = nil
     end)
+end
+
+--- 保存して書き込み完了まで待つ。成功したら true (アイテム消費など取り消せない処理の前に使う)
+local function persistAwait(cid)
+    persist(cid)
+    while Writing[cid] do Wait(50) end
+    return LastWriteOk[cid] == true
 end
 
 local function loadData(cid)
@@ -530,14 +543,30 @@ local function installApp(src, appId, force)
             if itemCount(src, app.item) < 1 then
                 return result(false, Config.Locale.needItem:format(itemLabel(app.item)))
             end
-            if app.consumeItem and not exports.ox_inventory:RemoveItem(src, app.item, 1) then
-                return result(false, Config.Locale.needItem:format(itemLabel(app.item)))
-            end
         end
     end
 
     data.apps[#data.apps + 1] = appId
-    persist(cid)
+
+    if not force and app.item and app.consumeItem then
+        -- アイテム消費は取り消せないので、インストールが DB に保存できたのを確認してから消費する
+        local function rollback()
+            local idx = contains(data.apps, appId)
+            if idx then table.remove(data.apps, idx) end
+            persist(cid)
+        end
+        if not persistAwait(cid) then
+            rollback()
+            return result(false, Config.Locale.saveFailed)
+        end
+        if not exports.ox_inventory:RemoveItem(src, app.item, 1) then
+            rollback()
+            return result(false, Config.Locale.needItem:format(itemLabel(app.item)))
+        end
+    else
+        persist(cid)
+    end
+
     return result(true, Config.Locale.installed, { installed = filterInstalled(data.apps) })
 end
 

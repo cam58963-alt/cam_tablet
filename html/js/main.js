@@ -79,7 +79,7 @@
         T.closeApp(false);
         state.notifications = [];
         state.badges = {};
-        state.downloads = {};
+        T.cancelDownloads();
         state.ready = false;
     }
 
