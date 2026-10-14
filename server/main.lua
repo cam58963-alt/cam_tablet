@@ -944,6 +944,8 @@ local function purgeInstalls(appId)
         DeleteResourceKvp('owner:' .. appId)
         DeleteResourceKvp('purge:' .. appId)
         PurgingIds[appId] = nil
+        -- 掃除中に登録を断られたリソース (起動時の cam_tablet:ready で登録した物など) に登録し直してもらう
+        TriggerEvent('cam_tablet:ready')
     end)
 end
 

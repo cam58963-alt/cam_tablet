@@ -300,7 +300,7 @@ exports.cam_tablet:RegisterApp({
 | `GetApps()` | 登録されている全アプリ |
 | `Notify(src, { title, message, icon, color, app })` | タブレットに通知 |
 
-イベント: `cam_tablet:ready`（サーバー / 外部アプリの登録タイミング）
+イベント: `cam_tablet:ready`（サーバー / 外部アプリの登録タイミング。`cam_tablet` の起動時と、`RemoveApp` の掃除が終わった時に発火するので、何度呼ばれても大丈夫なように登録してください）
 
 ### クライアント
 
