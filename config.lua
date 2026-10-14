@@ -89,7 +89,7 @@ Config.StorageMB = 32768
     jobs        : 利用できる職業 { police = 0 } (数字は必要な最低グレード) / { 'police', 'ambulance' }
                   条件を満たさなくなったアプリは次にタブレットを開いた時 (開いている間の転職なら即時) に自動でアンインストールされます
     gangs       : 利用できるギャング (jobs と同じ形式。jobs と gangs はどちらかを満たせばOK)
-    item        : インストールに必要なアイテム
+    item        : インストールに必要なアイテム (インストール時だけ確認。インストール後は持っていなくても使える)
     consumeItem : true でインストール時に item を消費
     deviceItem  : このアプリ専用端末にするアイテム (例: 'racing_tablet')  Config.AppItems と同じ動作
 ]]
