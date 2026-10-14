@@ -104,10 +104,20 @@ local function getProfile()
     }
 end
 
+-- 掛け持ち中の職業/ギャング (名前 -> グレード) を比較用の文字列にする
+local function groupsKey(groups)
+    if type(groups) ~= 'table' then return '' end
+    local list = {}
+    for name, grade in pairs(groups) do list[#list + 1] = ('%s=%s'):format(name, grade) end
+    table.sort(list)
+    return table.concat(list, ',')
+end
+
 local function groupKey()
     local pd = exports.qbx_core:GetPlayerData() or {}
     local job, gang = pd.job or {}, pd.gang or {}
-    return ('%s:%s|%s:%s'):format(job.name, job.grade and job.grade.level, gang.name, gang.grade and gang.grade.level)
+    return ('%s:%s|%s:%s|%s|%s'):format(job.name, job.grade and job.grade.level, gang.name, gang.grade and gang.grade.level,
+        groupsKey(pd.jobs), groupsKey(pd.gangs))
 end
 
 local function uiConfig()

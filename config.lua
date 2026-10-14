@@ -65,6 +65,11 @@ Config.DockApps = { 'store', 'notes', 'calculator', 'settings' }
 -- 利用条件 (職業など) を満たさないアプリをストアから隠す (false の場合はロック表示)
 Config.HideRestrictedApps = true
 
+-- 職業/ギャングの判定方法 (QBox 標準のマルチジョブ)
+-- true : 掛け持ちしている職業・ギャングすべてで判定 (PlayerData.jobs / gangs)。職業を切り替えてもアプリは消えない
+-- false: 今の職業・ギャング (PlayerData.job / gang) だけで判定。切り替えると条件外のアプリは自動で削除される
+Config.MultiJob = true
+
 -- ダウンロード演出の速度 (1MB あたりのミリ秒 / 最小 / 最大)
 Config.Download = { msPerMB = 60, min = 1200, max = 8000 }
 

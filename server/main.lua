@@ -200,21 +200,25 @@ CreateThread(function()
     end
 end)
 
+-- groups ({ police = 0 }) のどれかを必要なグレード以上で持っているか
+-- primary は今の職業/ギャング (PlayerData.job / gang)、all は掛け持ち中の物 (PlayerData.jobs / gangs: 名前 -> グレード)
+local function meetsGroups(groups, primary, all)
+    if not groups then return false end
+    if primary and groups[primary.name] and ((primary.grade and primary.grade.level) or 0) >= groups[primary.name] then
+        return true
+    end
+    if Config.MultiJob and type(all) == 'table' then
+        for name, grade in pairs(all) do
+            if groups[name] and (tonumber(grade) or 0) >= groups[name] then return true end
+        end
+    end
+    return false
+end
+
 local function hasAccess(player, app)
     if not app.jobs and not app.gangs then return true end
-
     local pd = player.PlayerData
-    local job, gang = pd.job, pd.gang
-
-    if app.jobs and job and app.jobs[job.name] and ((job.grade and job.grade.level) or 0) >= app.jobs[job.name] then
-        return true
-    end
-
-    if app.gangs and gang and app.gangs[gang.name] and ((gang.grade and gang.grade.level) or 0) >= app.gangs[gang.name] then
-        return true
-    end
-
-    return false
+    return meetsGroups(app.jobs, pd.job, pd.jobs) or meetsGroups(app.gangs, pd.gang, pd.gangs)
 end
 
 local function groupNames(groups)
