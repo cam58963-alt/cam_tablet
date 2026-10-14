@@ -152,7 +152,8 @@ exports.cam_tablet:RegisterAppItem('racing_tablet', 'racing')
 
 外部リソースは自分の NUI ページ（HTML）を用意し、`RegisterApp` で登録します。タブレット内では iframe として表示されます。
 登録したリソースが停止するとアプリは自動で消え、`cam_tablet` が再起動した時は `cam_tablet:ready` イベントで再登録できます。
-アプリの ID は登録したリソースのものになり、別のリソースから同じ ID で登録すると拒否されます（`config.lua` の組み込みアプリも上書きできません）。
+アプリの ID は最初に登録したリソースのものになり、別のリソースから同じ ID で登録すると拒否されます（`config.lua` の組み込みアプリも上書きできません）。
+登録元が停止しても ID は予約されたままです（保存済みのインストールが別のアプリに引き継がれないように）。ID を別のリソースに譲る場合は、登録元から `RemoveApp` を呼んでインストールごと削除してください。予約は `cam_tablet` を再起動するとリセットされます。
 
 `examples/cam_tablet_example/` に動くサンプルがあります（**使う場合は `cam_tablet` の外の resources に移動してください**）。
 
@@ -278,8 +279,8 @@ exports.cam_tablet:RegisterApp({
 | export | 説明 |
 |---|---|
 | `RegisterApp(app)` | アプリを登録（配列で複数可）。登録元リソース停止で自動削除 |
-| `RemoveApp(appId)` | アプリを削除（登録したリソースからのみ。全プレイヤーのインストール済みからも消えます） |
-| `RegisterAppItem(item, appId)` | 専用端末アイテムを登録 |
+| `RemoveApp(appId)` | アプリを削除して ID の予約を解除（登録したリソースからのみ。登録元の停止中でも可。全プレイヤーのインストール済みからも消えます） |
+| `RegisterAppItem(item, appId)` | 専用端末アイテムを登録（アプリを `RegisterApp` で更新しても残ります。`deviceItem` で付けたものは更新時に付け直し） |
 | `InstallApp(src, appId)` | 条件無視でプレイヤーにインストール（報酬など。職業制限のあるアプリは条件を満たさないと次回開いた時に削除されます） |
 | `UninstallApp(src, appId)` | アンインストール |
 | `HasApp(src, appId)` | インストール済みか |

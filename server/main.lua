@@ -1,6 +1,7 @@
 local Catalog, CatalogOrder = {}, {}
-local DeviceItems = {}  -- item -> { app = appId, resource = resource }  (アプリ専用端末アイテム)
+local DeviceItems = {}  -- item -> { app = appId, resource = resource, appOwner, fromApp }  (アプリ専用端末アイテム)
 local PurgingIds = {}   -- RemoveApp の DB 掃除中の app id
+local IdOwner = {}      -- app id -> 最初に登録したリソース (停止後も RemoveApp するまで予約)
 local Cache = {}       -- citizenid -> { apps, settings, notes, events }
 
 ---------------------------------------------------------------------
@@ -78,7 +79,8 @@ local function normalizeGroups(groups)
 end
 
 --- アイテムを使うと、そのアプリだけを開く専用端末モードでタブレットを起動する
-local function registerDeviceItem(item, appId, resource)
+--- fromApp = true は RegisterApp の deviceItem から作られた紐付け (アプリの再登録時に付け直す対象)
+local function registerDeviceItem(item, appId, resource, fromApp)
     if type(item) ~= 'string' or item == '' or type(appId) ~= 'string' then return false end
     local existing = DeviceItems[item]
     if existing and existing.resource ~= resource then
@@ -90,7 +92,7 @@ local function registerDeviceItem(item, appId, resource)
     -- 紐付けた時点のアプリの登録元を覚える。登録元が変わった (同じ ID を別リソースが登録した) 場合は許可しない
     -- (config の AppItems のようにアプリ登録前に紐付けた場合は、最初にそのアプリを登録したリソースに結び付ける)
     local target = Catalog[appId]
-    DeviceItems[item] = { app = appId, resource = resource, appOwner = target and target.resource or nil }
+    DeviceItems[item] = { app = appId, resource = resource, appOwner = target and target.resource or nil, fromApp = fromApp == true }
     if isNew then
         exports.qbx_core:CreateUseableItem(item, function(source)
             local entry = DeviceItems[item]
@@ -121,11 +123,12 @@ local function registerApp(app, resource)
         lib.print.warn(('RegisterApp: %s is still being removed, try again shortly'):format(app.id))
         return false
     end
-    local existing = Catalog[app.id]
-    if existing and existing.resource ~= resource then
-        -- 別のリソースが登録済みの ID は上書きさせない (他のアプリの URL を差し替えられないように)
-        -- 登録元が停止すればそのアプリは自動で消えるので、同じ ID はその後に登録できる
-        lib.print.warn(('RegisterApp: %s tried to override app %s owned by %s'):format(resource, app.id, existing.resource))
+    local owner = IdOwner[app.id]
+    if owner and owner ~= resource then
+        -- 別のリソースの ID は上書きさせない (他のアプリの URL を差し替えられないように)
+        -- 登録元が停止していても予約したまま (保存済みのインストールが別のアプリに引き継がれないように)。
+        -- ID を譲る時は、登録元が RemoveApp でインストールごと削除する
+        lib.print.warn(('RegisterApp: %s tried to use app id %s owned by %s'):format(resource, app.id, owner))
         return false
     end
 
@@ -154,16 +157,18 @@ local function registerApp(app, resource)
         CatalogOrder[#CatalogOrder + 1] = entry.id
     end
     Catalog[entry.id] = entry
+    IdOwner[entry.id] = resource
 
     -- deviceItem = 'racing_tablet' または { 'a', 'b' } でアプリ専用アイテムを登録
-    -- 再登録時は、同じ登録元が以前付けた紐付けを消してから付け直す (deviceItem を外した / 変えた場合に古いアイテムが残らないように)
+    -- 再登録時は、前回の deviceItem で付けた紐付けを消してから付け直す (deviceItem を外した / 変えた場合に古いアイテムが残らないように)
+    -- RegisterAppItem で別に付けた紐付けはそのまま残す
     for item, dev in pairs(DeviceItems) do
-        if dev.app == entry.id and dev.resource == resource then DeviceItems[item] = nil end
+        if dev.app == entry.id and dev.resource == resource and dev.fromApp then DeviceItems[item] = nil end
     end
     local devices = app.deviceItem
     if type(devices) == 'string' then devices = { devices } end
     if type(devices) == 'table' then
-        for i = 1, #devices do registerDeviceItem(devices[i], entry.id, resource) end
+        for i = 1, #devices do registerDeviceItem(devices[i], entry.id, resource, true) end
     end
     -- アプリ登録前に作られた紐付けは、最初に登録したリソースのアプリに結び付ける
     -- (そのリソースが止まった後に別リソースが同じ ID を登録しても、古いアイテムでは開けない)
@@ -174,14 +179,15 @@ local function registerApp(app, resource)
 end
 
 local function removeApp(id)
+    -- 専用端末アイテムの紐付けも消す (同じIDで別のアプリが登録された時に古いアイテムで開けないように)
+    -- 登録元が停止中でカタログに無い場合も、残っている紐付けは消す
+    for item, entry in pairs(DeviceItems) do
+        if entry.app == id then DeviceItems[item] = nil end
+    end
     if not Catalog[id] then return false end
     Catalog[id] = nil
     local idx = contains(CatalogOrder, id)
     if idx then table.remove(CatalogOrder, idx) end
-    -- 専用端末アイテムの紐付けも消す (同じIDで別のアプリが登録された時に古いアイテムで開けないように)
-    for item, entry in pairs(DeviceItems) do
-        if entry.app == id then DeviceItems[item] = nil end
-    end
     return true
 end
 
@@ -845,19 +851,19 @@ local function purgeInstalls(appId)
 end
 
 exports('RemoveApp', function(appId)
-    -- 登録したリソース (または cam_tablet 自身) だけが削除できる
-    local app = Catalog[appId]
+    -- 登録したリソース (または cam_tablet 自身) だけが削除できる。登録元が停止中の ID も削除して譲れる
+    local owner = type(appId) == 'string' and IdOwner[appId]
+    if not owner then return false end
     local caller = GetInvokingResource() or GetCurrentResourceName()
-    if app and app.resource ~= caller and caller ~= GetCurrentResourceName() then
-        lib.print.warn(('RemoveApp: %s tried to remove app %s owned by %s'):format(caller, appId, app.resource))
+    if owner ~= caller and caller ~= GetCurrentResourceName() then
+        lib.print.warn(('RemoveApp: %s tried to remove app %s owned by %s'):format(caller, appId, owner))
         return false
     end
-    local ok = removeApp(appId)
-    if ok then
-        purgeInstalls(appId)
-        catalogChanged()
-    end
-    return ok
+    removeApp(appId)
+    IdOwner[appId] = nil -- 掃除が終わるまでは PurgingIds で再登録を止める
+    purgeInstalls(appId)
+    catalogChanged()
+    return true
 end)
 
 --- プレイヤーにアプリを付与 (条件チェック無し)
