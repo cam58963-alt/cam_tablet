@@ -258,7 +258,7 @@ exports.cam_tablet:RegisterApp({
 | export | 説明 |
 |---|---|
 | `RegisterApp(app)` | アプリを登録（配列で複数可）。登録元リソース停止で自動削除 |
-| `RemoveApp(appId)` | アプリを削除 |
+| `RemoveApp(appId)` | アプリを削除（登録したリソースからのみ。全プレイヤーのインストール済みからも消えます） |
 | `RegisterAppItem(item, appId)` | 専用端末アイテムを登録 |
 | `InstallApp(src, appId)` | 条件無視でプレイヤーにインストール（報酬など。職業制限のあるアプリは条件を満たさないと次回開いた時に削除されます） |
 | `UninstallApp(src, appId)` | アンインストール |

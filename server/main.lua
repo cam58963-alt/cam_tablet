@@ -555,11 +555,9 @@ lib.callback.register('cam_tablet:server:getData', function(src, appId, viaDevic
     local data, player, _, removed, added = getData(src)
     if not data then return false end
 
-    -- 初回はDB読み込みを待つので、その間にアイテムを手放していないか確認し直す
-    if device then
-        device = hasDeviceItem(src, appId)
-        if not device and not canOpen(src) then return false end
-    end
+    -- 初回はDB読み込みを待つので、その間にアイテムを手放していないか確認し直す (専用アイテム / タブレット本体の両方)
+    if device then device = hasDeviceItem(src, appId) end
+    if not device and not canOpen(src) then return false end
 
     return {
         device = device,
@@ -783,6 +781,13 @@ local function purgeInstalls(appId)
 end
 
 exports('RemoveApp', function(appId)
+    -- 登録したリソース (または cam_tablet 自身) だけが削除できる
+    local app = Catalog[appId]
+    local caller = GetInvokingResource() or GetCurrentResourceName()
+    if app and app.resource ~= caller and caller ~= GetCurrentResourceName() then
+        lib.print.warn(('RemoveApp: %s tried to remove app %s owned by %s'):format(caller, appId, app.resource))
+        return false
+    end
     local ok = removeApp(appId)
     if ok then
         purgeInstalls(appId)
