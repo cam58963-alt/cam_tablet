@@ -18,9 +18,19 @@ local function setOwner(id, resource)
     IdOwner[id] = resource
 end
 
-local function releaseOwner(id)
-    IdOwner[id] = nil
-    DeleteResourceKvp('owner:' .. id)
+-- RemoveApp の掃除が終わる前に cam_tablet が止まっていたら、その ID の登録を止めておき起動後に掃除をやり直す
+-- (KVP の予約は掃除が終わってから消すので、それまで別のリソースには渡らない)
+local PendingPurges = {}
+do
+    local handle = StartFindKvp('purge:')
+    while true do
+        local key = FindKvp(handle)
+        if not key then break end
+        local id = key:sub(7) -- 'purge:' の後ろ
+        PurgingIds[id] = true
+        PendingPurges[#PendingPurges + 1] = id
+    end
+    EndFindKvp(handle)
 end
 local Cache = {}       -- citizenid -> { apps, settings, notes, events }
 
@@ -913,14 +923,21 @@ local function purgeInstalls(appId)
         for cid, data in pairs(Cache) do
             if stripPurging(data.apps) then persist(cid) end
         end
+        -- 掃除が終わってから ID の予約を外す
+        IdOwner[appId] = nil
+        DeleteResourceKvp('owner:' .. appId)
+        DeleteResourceKvp('purge:' .. appId)
         PurgingIds[appId] = nil
     end)
 end
 
---- アプリを削除して全員のインストールを消し、ID の予約を解除する
+for i = 1, #PendingPurges do purgeInstalls(PendingPurges[i]) end
+
+--- アプリを削除して全員のインストールを消し、ID の予約を解除する (予約は掃除が終わった時点で外れる)
 local function releaseApp(appId)
+    if PurgingIds[appId] then return end -- 削除中
     removeApp(appId)
-    releaseOwner(appId) -- 掃除が終わるまでは PurgingIds で再登録を止める
+    SetResourceKvp('purge:' .. appId, '1') -- 掃除の途中で止まっても、次の起動時にやり直す
     purgeInstalls(appId)
     catalogChanged()
 end
@@ -947,8 +964,12 @@ RegisterCommand('cam_tablet_releaseid', function(source, args)
         print(('cam_tablet: app id %s is not reserved'):format(tostring(appId)))
         return
     end
+    if PurgingIds[appId] then
+        print(('cam_tablet: app id %s is already being removed'):format(appId))
+        return
+    end
     releaseApp(appId)
-    print(('cam_tablet: released app id %s (was owned by %s); installs are being removed'):format(appId, owner))
+    print(('cam_tablet: removing installs of app id %s (owned by %s); the id is released once that finishes'):format(appId, owner))
 end, true)
 
 --- プレイヤーにアプリを付与 (条件チェック無し)

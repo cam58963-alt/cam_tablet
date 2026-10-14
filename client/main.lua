@@ -194,6 +194,10 @@ local function openTablet(appId, standalone, viaDevice)
 
     -- 待っている間に Close() / ログアウトされたら開かない
     if token ~= openToken then return end
+    -- 待っている間に死亡 / 拘束 / ポーズメニューなどで使えなくなっていたら開かない
+    if not canUseNow() then
+        return lib.notify({ description = Config.Locale.cannotUse, type = 'error' })
+    end
 
     if not data then
         return lib.notify({ description = Config.Locale.noTablet, type = 'error' })
