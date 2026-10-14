@@ -88,7 +88,7 @@ local function registerDeviceItem(item, appId, resource)
     end
     local isNew = existing == nil
     -- 紐付けた時点のアプリの登録元を覚える。登録元が変わった (同じ ID を別リソースが登録した) 場合は許可しない
-    -- (config の AppItems のように、アプリ登録前に紐付けた場合は登録元を問わない)
+    -- (config の AppItems のようにアプリ登録前に紐付けた場合は、最初にそのアプリを登録したリソースに結び付ける)
     local target = Catalog[appId]
     DeviceItems[item] = { app = appId, resource = resource, appOwner = target and target.resource or nil }
     if isNew then
@@ -164,6 +164,11 @@ local function registerApp(app, resource)
     if type(devices) == 'string' then devices = { devices } end
     if type(devices) == 'table' then
         for i = 1, #devices do registerDeviceItem(devices[i], entry.id, resource) end
+    end
+    -- アプリ登録前に作られた紐付けは、最初に登録したリソースのアプリに結び付ける
+    -- (そのリソースが止まった後に別リソースが同じ ID を登録しても、古いアイテムでは開けない)
+    for _, dev in pairs(DeviceItems) do
+        if dev.app == entry.id and not dev.appOwner then dev.appOwner = resource end
     end
     return true
 end
@@ -425,21 +430,41 @@ local function getData(src)
     return data, player, cid, removed, added
 end
 
-local function onPlayerLeft(src)
+-- ログアウト直後の最後の保存を受け付ける時間。サーバーのログアウト処理はクライアントより先に走るため、
+-- クライアントがログアウトを受け取ってから送る保留中の保存 (メモ・予定・設定) はプレイヤーが消えた後に届く
+local LOGOUT_GRACE = 10000
+local LoggedOut = {} -- source -> { cid = citizenid, expires = GetGameTimer() }
+
+local function onPlayerLeft(src, dropped)
     local cid = SourceCid[src]
     SourceCid[src] = nil
-    evict(cid)
+    LoggedOut[src] = nil
+    if not cid then return end
+    -- 切断した場合はもう保存が届かない (source も別の人に再利用される) ので猶予なしで破棄する
+    if dropped then return evict(cid) end
+    LoggedOut[src] = { cid = cid, expires = GetGameTimer() + LOGOUT_GRACE }
+    -- キャッシュは猶予が終わってから破棄する (それまでに同じキャラクターで入り直していれば残す)
+    SetTimeout(LOGOUT_GRACE, function()
+        local left = LoggedOut[src]
+        if left and left.cid == cid then LoggedOut[src] = nil end
+        if not isActive(cid) then evict(cid) end
+    end)
 end
 
-AddEventHandler('playerDropped', function() onPlayerLeft(source) end)
+AddEventHandler('playerDropped', function() onPlayerLeft(source, true) end)
 
 --- 保存系の処理用: タブレットを開いた時のキャラクター (expectedCid) が今のキャラクターと同じ時だけデータを返す
 --- (ログアウト時に送られた前のキャラクターの保存が、次のキャラクターに書き込まれないように)
-local function getDataFor(src, expectedCid)
+--- afterLogout = true なら、ログアウト直後に届いたそのキャラクターの保存も受け付ける (メモ・設定など。インストールは不可)
+local function getDataFor(src, expectedCid, afterLogout)
     if type(expectedCid) ~= 'string' then return nil end
     local player = getPlayer(src)
-    if not player or player.PlayerData.citizenid ~= expectedCid then return nil end
-    return getData(src)
+    if player and player.PlayerData.citizenid == expectedCid then return getData(src) end
+    local left = afterLogout and LoggedOut[src]
+    if left and left.cid == expectedCid and GetGameTimer() <= left.expires and Cache[expectedCid] then
+        return Cache[expectedCid], nil, expectedCid
+    end
+    return nil
 end
 -- キャラクター選択に戻った時 (QBox 本体のイベント)
 AddEventHandler('qbx_core:server:playerLoggedOut', onPlayerLeft)
@@ -557,7 +582,7 @@ local function hasDeviceItem(src, appId)
     local app = appId and Catalog[appId]
     if not app then return false end
     for item, entry in pairs(DeviceItems) do
-        if entry.app == appId and (not entry.appOwner or entry.appOwner == app.resource) and itemCount(src, item) > 0 then
+        if entry.app == appId and entry.appOwner == app.resource and itemCount(src, item) > 0 then
             return true
         end
     end
@@ -686,7 +711,7 @@ lib.callback.register('cam_tablet:server:uninstall', function(src, appId, expect
 end)
 
 lib.callback.register('cam_tablet:server:reorder', function(src, order, expectedCid)
-    local data, _, cid = getDataFor(src, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
     if not data or type(order) ~= 'table' then return false end
 
     -- 送られてきた順番のうち、インストール済みの物だけ採用し、漏れた物は末尾に残す
@@ -708,7 +733,7 @@ lib.callback.register('cam_tablet:server:reorder', function(src, order, expected
 end)
 
 lib.callback.register('cam_tablet:server:saveSettings', function(src, settings, expectedCid)
-    local data, _, cid = getDataFor(src, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
     if not data then return false end
     data.settings = sanitizeSettings(data.settings, settings)
     persist(cid)
@@ -716,7 +741,7 @@ lib.callback.register('cam_tablet:server:saveSettings', function(src, settings, 
 end)
 
 lib.callback.register('cam_tablet:server:resetSettings', function(src, _, expectedCid)
-    local data, _, cid = getDataFor(src, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
     if not data then return false end
     data.settings = {}
     persist(cid)
@@ -724,7 +749,7 @@ lib.callback.register('cam_tablet:server:resetSettings', function(src, _, expect
 end)
 
 lib.callback.register('cam_tablet:server:saveNotes', function(src, notes, expectedCid)
-    local data, _, cid = getDataFor(src, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
     local clean = sanitizeNotes(notes)
     if not data or not clean then return false end
     data.notes = clean
@@ -733,7 +758,7 @@ lib.callback.register('cam_tablet:server:saveNotes', function(src, notes, expect
 end)
 
 lib.callback.register('cam_tablet:server:saveEvents', function(src, events, expectedCid)
-    local data, _, cid = getDataFor(src, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
     local clean = sanitizeEvents(events)
     if not data or not clean then return false end
     data.events = clean
