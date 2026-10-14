@@ -2,6 +2,26 @@ local Catalog, CatalogOrder = {}, {}
 local DeviceItems = {}  -- item -> { app = appId, resource = resource, appOwner, fromApp }  (アプリ専用端末アイテム)
 local PurgingIds = {}   -- RemoveApp の DB 掃除中の app id
 local IdOwner = {}      -- app id -> 最初に登録したリソース (停止後も RemoveApp するまで予約)
+
+-- ID の持ち主は KVP にも保存し、cam_tablet を再起動しても引き継ぐ (登録順で保存済みのインストールが別アプリに渡らないように)
+local function ownerOf(id)
+    if IdOwner[id] then return IdOwner[id] end
+    local stored = GetResourceKvpString('owner:' .. id)
+    if stored and stored ~= '' then
+        IdOwner[id] = stored
+        return stored
+    end
+end
+
+local function setOwner(id, resource)
+    if GetResourceKvpString('owner:' .. id) ~= resource then SetResourceKvp('owner:' .. id, resource) end
+    IdOwner[id] = resource
+end
+
+local function releaseOwner(id)
+    IdOwner[id] = nil
+    DeleteResourceKvp('owner:' .. id)
+end
 local Cache = {}       -- citizenid -> { apps, settings, notes, events }
 
 ---------------------------------------------------------------------
@@ -123,12 +143,13 @@ local function registerApp(app, resource)
         lib.print.warn(('RegisterApp: %s is still being removed, try again shortly'):format(app.id))
         return false
     end
-    local owner = IdOwner[app.id]
+    local owner = ownerOf(app.id)
     if owner and owner ~= resource then
         -- 別のリソースの ID は上書きさせない (他のアプリの URL を差し替えられないように)
         -- 登録元が停止していても予約したまま (保存済みのインストールが別のアプリに引き継がれないように)。
         -- ID を譲る時は、登録元が RemoveApp でインストールごと削除する
-        lib.print.warn(('RegisterApp: %s tried to use app id %s owned by %s'):format(resource, app.id, owner))
+        lib.print.warn(('RegisterApp: %s tried to use app id %s owned by %s (to release it: RemoveApp from %s, or the console command cam_tablet_releaseid %s)')
+            :format(resource, app.id, owner, owner, app.id))
         return false
     end
 
@@ -157,7 +178,7 @@ local function registerApp(app, resource)
         CatalogOrder[#CatalogOrder + 1] = entry.id
     end
     Catalog[entry.id] = entry
-    IdOwner[entry.id] = resource
+    setOwner(entry.id, resource)
 
     -- deviceItem = 'racing_tablet' または { 'a', 'b' } でアプリ専用アイテムを登録
     -- 再登録時は、前回の deviceItem で付けた紐付けを消してから付け直す (deviceItem を外した / 変えた場合に古いアイテムが残らないように)
@@ -896,21 +917,39 @@ local function purgeInstalls(appId)
     end)
 end
 
+--- アプリを削除して全員のインストールを消し、ID の予約を解除する
+local function releaseApp(appId)
+    removeApp(appId)
+    releaseOwner(appId) -- 掃除が終わるまでは PurgingIds で再登録を止める
+    purgeInstalls(appId)
+    catalogChanged()
+end
+
 exports('RemoveApp', function(appId)
     -- 登録したリソース (または cam_tablet 自身) だけが削除できる。登録元が停止中の ID も削除して譲れる
-    local owner = type(appId) == 'string' and IdOwner[appId]
+    local owner = type(appId) == 'string' and ownerOf(appId)
     if not owner then return false end
     local caller = GetInvokingResource() or GetCurrentResourceName()
     if owner ~= caller and caller ~= GetCurrentResourceName() then
         lib.print.warn(('RemoveApp: %s tried to remove app %s owned by %s'):format(caller, appId, owner))
         return false
     end
-    removeApp(appId)
-    IdOwner[appId] = nil -- 掃除が終わるまでは PurgingIds で再登録を止める
-    purgeInstalls(appId)
-    catalogChanged()
+    releaseApp(appId)
     return true
 end)
+
+-- サーバーコンソール用: 持ち主のリソースを消した / 名前を変えた時などに ID を解放する (全員のインストールも消える)
+RegisterCommand('cam_tablet_releaseid', function(source, args)
+    if source ~= 0 then return end
+    local appId = args[1]
+    local owner = type(appId) == 'string' and ownerOf(appId)
+    if not owner then
+        print(('cam_tablet: app id %s is not reserved'):format(tostring(appId)))
+        return
+    end
+    releaseApp(appId)
+    print(('cam_tablet: released app id %s (was owned by %s); installs are being removed'):format(appId, owner))
+end, true)
 
 --- プレイヤーにアプリを付与 (条件チェック無し)
 exports('InstallApp', function(src, appId)
