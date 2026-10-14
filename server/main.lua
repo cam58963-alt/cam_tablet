@@ -79,7 +79,13 @@ end
 --- アイテムを使うと、そのアプリだけを開く専用端末モードでタブレットを起動する
 local function registerDeviceItem(item, appId, resource)
     if type(item) ~= 'string' or item == '' or type(appId) ~= 'string' then return false end
-    local isNew = DeviceItems[item] == nil
+    local existing = DeviceItems[item]
+    if existing and existing.resource ~= resource then
+        -- 別のリソースが登録済みのアイテムは付け替えさせない
+        lib.print.warn(('RegisterAppItem: %s tried to take over item %s owned by %s'):format(resource, item, existing.resource))
+        return false
+    end
+    local isNew = existing == nil
     DeviceItems[item] = { app = appId, resource = resource }
     if isNew then
         exports.qbx_core:CreateUseableItem(item, function(source)
@@ -415,6 +421,15 @@ local function onPlayerLeft(src)
 end
 
 AddEventHandler('playerDropped', function() onPlayerLeft(source) end)
+
+--- 保存系の処理用: タブレットを開いた時のキャラクター (expectedCid) が今のキャラクターと同じ時だけデータを返す
+--- (ログアウト時に送られた前のキャラクターの保存が、次のキャラクターに書き込まれないように)
+local function getDataFor(src, expectedCid)
+    if type(expectedCid) ~= 'string' then return nil end
+    local player = getPlayer(src)
+    if not player or player.PlayerData.citizenid ~= expectedCid then return nil end
+    return getData(src)
+end
 -- キャラクター選択に戻った時 (QBox 本体のイベント)
 AddEventHandler('qbx_core:server:playerLoggedOut', onPlayerLeft)
 
@@ -578,8 +593,13 @@ local function result(ok, message, extra)
     return r
 end
 
-local function installApp(src, appId, force)
-    local data, player, cid = getData(src)
+local function installApp(src, appId, force, expectedCid)
+    local data, player, cid
+    if force then
+        data, player, cid = getData(src)
+    else
+        data, player, cid = getDataFor(src, expectedCid)
+    end
     if not data then return result(false, Config.Locale.notFound) end
 
     local app = Catalog[appId]
@@ -631,13 +651,13 @@ local function installApp(src, appId, force)
     return result(true, Config.Locale.installed, { installed = filterInstalled(data.apps) })
 end
 
-lib.callback.register('cam_tablet:server:install', function(src, appId)
+lib.callback.register('cam_tablet:server:install', function(src, appId, expectedCid)
     if type(appId) ~= 'string' then return result(false, Config.Locale.notFound) end
-    return installApp(src, appId, false)
+    return installApp(src, appId, false, expectedCid)
 end)
 
-lib.callback.register('cam_tablet:server:uninstall', function(src, appId)
-    local data, _, cid = getData(src)
+lib.callback.register('cam_tablet:server:uninstall', function(src, appId, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid)
     if not data or type(appId) ~= 'string' then return result(false, Config.Locale.notFound) end
 
     local app = Catalog[appId]
@@ -651,8 +671,8 @@ lib.callback.register('cam_tablet:server:uninstall', function(src, appId)
     return result(true, nil, { installed = filterInstalled(data.apps) })
 end)
 
-lib.callback.register('cam_tablet:server:reorder', function(src, order)
-    local data, _, cid = getData(src)
+lib.callback.register('cam_tablet:server:reorder', function(src, order, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid)
     if not data or type(order) ~= 'table' then return false end
 
     -- 送られてきた順番のうち、インストール済みの物だけ採用し、漏れた物は末尾に残す
@@ -673,24 +693,24 @@ lib.callback.register('cam_tablet:server:reorder', function(src, order)
     return true
 end)
 
-lib.callback.register('cam_tablet:server:saveSettings', function(src, settings)
-    local data, _, cid = getData(src)
+lib.callback.register('cam_tablet:server:saveSettings', function(src, settings, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid)
     if not data then return false end
     data.settings = sanitizeSettings(data.settings, settings)
     persist(cid)
     return data.settings
 end)
 
-lib.callback.register('cam_tablet:server:resetSettings', function(src)
-    local data, _, cid = getData(src)
+lib.callback.register('cam_tablet:server:resetSettings', function(src, _, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid)
     if not data then return false end
     data.settings = {}
     persist(cid)
     return data.settings
 end)
 
-lib.callback.register('cam_tablet:server:saveNotes', function(src, notes)
-    local data, _, cid = getData(src)
+lib.callback.register('cam_tablet:server:saveNotes', function(src, notes, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid)
     local clean = sanitizeNotes(notes)
     if not data or not clean then return false end
     data.notes = clean
@@ -698,8 +718,8 @@ lib.callback.register('cam_tablet:server:saveNotes', function(src, notes)
     return true
 end)
 
-lib.callback.register('cam_tablet:server:saveEvents', function(src, events)
-    local data, _, cid = getData(src)
+lib.callback.register('cam_tablet:server:saveEvents', function(src, events, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid)
     local clean = sanitizeEvents(events)
     if not data or not clean then return false end
     data.events = clean
@@ -744,7 +764,10 @@ end)
 --- アプリ専用端末アイテムを登録する (アイテムは ox_inventory に別途定義してください)
 --- exports.cam_tablet:RegisterAppItem('racing_tablet', 'racing')
 exports('RegisterAppItem', function(item, appId)
-    return registerDeviceItem(item, appId, GetInvokingResource() or GetCurrentResourceName())
+    local ok = registerDeviceItem(item, appId, GetInvokingResource() or GetCurrentResourceName())
+    -- 付け替え時に、開いている専用端末の許可を取り直させる
+    if ok then catalogChanged() end
+    return ok
 end)
 
 exports('GetApps', function()

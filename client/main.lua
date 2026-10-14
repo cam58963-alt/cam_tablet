@@ -8,6 +8,7 @@ local function alive(sid)
     return isOpen and sid == sessionId
 end
 local deviceApp -- 専用端末アイテムで許可されたアプリ (専用端末モードかどうかとは別に管理)
+local sessionCid -- 開いた時のキャラクター。保存はこのキャラクターにだけ書き込ませる
 local refreshCatalog -- 下で定義
 local tabletProp
 
@@ -194,6 +195,7 @@ local function openTablet(appId, standalone, viaDevice)
     deviceApp = data.device and appId or nil
 
     data.profile = getProfile()
+    sessionCid = data.profile.citizenid
     data.config = uiConfig()
     data.openApp = appId
     data.standalone = standalone
@@ -277,7 +279,8 @@ local function proxy(nuiName, serverName, field)
     RegisterNUICallback(nuiName, function(body, cb)
         local value = body
         if field then value = body and body[field] end
-        cb(lib.callback.await(serverName, false, value) or false)
+        -- 開いた時のキャラクターIDを付ける (ログアウト後に届いた保存を別キャラクターに書かせない)
+        cb(lib.callback.await(serverName, false, value, sessionCid) or false)
     end)
 end
 
