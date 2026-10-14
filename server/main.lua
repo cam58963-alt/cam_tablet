@@ -1,5 +1,6 @@
 local Catalog, CatalogOrder = {}, {}
 local DeviceItems = {}  -- item -> { app = appId, resource = resource }  (アプリ専用端末アイテム)
+local PurgingIds = {}   -- RemoveApp の DB 掃除中の app id
 local Cache = {}       -- citizenid -> { apps, settings, notes, events }
 
 ---------------------------------------------------------------------
@@ -86,7 +87,10 @@ local function registerDeviceItem(item, appId, resource)
         return false
     end
     local isNew = existing == nil
-    DeviceItems[item] = { app = appId, resource = resource }
+    -- 紐付けた時点のアプリの登録元を覚える。登録元が変わった (同じ ID を別リソースが登録した) 場合は許可しない
+    -- (config の AppItems のように、アプリ登録前に紐付けた場合は登録元を問わない)
+    local target = Catalog[appId]
+    DeviceItems[item] = { app = appId, resource = resource, appOwner = target and target.resource or nil }
     if isNew then
         exports.qbx_core:CreateUseableItem(item, function(source)
             local entry = DeviceItems[item]
@@ -110,6 +114,11 @@ local function registerApp(app, resource)
     end
     if app.url ~= nil and type(app.url) ~= 'string' then
         lib.print.warn(('RegisterApp: url must be a string (%s)'):format(app.id))
+        return false
+    end
+    if PurgingIds[app.id] then
+        -- RemoveApp の掃除が終わる前に同じ ID を使うと、新しいインストールまで消えるため拒否 (少し待って再登録)
+        lib.print.warn(('RegisterApp: %s is still being removed, try again shortly'):format(app.id))
         return false
     end
     local existing = Catalog[app.id]
@@ -351,7 +360,8 @@ local function loadData(cid)
     -- DB を待っている間に別の処理が先に読み込み済みなら、そちらを使う (後から上書きすると先の変更が消える)
     if Cache[cid] then return Cache[cid] end
     -- DB を待っている間にログアウト / 切断していたらキャッシュに入れない (破棄済みのため残り続けてしまう)
-    if not isActive(cid) then return data end
+    -- 呼び出し元は保存できないデータを書き換えることになるので、失敗として扱わせる
+    if not isActive(cid) then return nil end
     Cache[cid] = data
     if not row then persist(cid) end
     return data
@@ -408,6 +418,7 @@ local function getData(src)
     if previous and previous ~= cid then evict(previous) end
     EvictAfterWrite[cid] = nil
     local data = loadData(cid)
+    if not data then return end -- 読み込み中にログアウトした
     ensureSystemApps(data, cid)
     local removed = pruneRestrictedApps(data, player, cid)
     local added = installAutoApps(data, player, cid)
@@ -543,9 +554,12 @@ end
 
 local function hasDeviceItem(src, appId)
     -- 対象アプリが存在しない (登録元が停止中など) なら許可しない
-    if not appId or not Catalog[appId] then return false end
+    local app = appId and Catalog[appId]
+    if not app then return false end
     for item, entry in pairs(DeviceItems) do
-        if entry.app == appId and itemCount(src, item) > 0 then return true end
+        if entry.app == appId and (not entry.appOwner or entry.appOwner == app.resource) and itemCount(src, item) > 0 then
+            return true
+        end
     end
     return false
 end
@@ -780,6 +794,7 @@ end)
 -- (同じIDで再登録した時に、必要アイテムなどの条件を通らずにインストール済み扱いにならないように)
 -- ※ リソース停止による一時的な削除ではインストール済みのまま残す
 local function purgeInstalls(appId)
+    PurgingIds[appId] = true
     for cid, data in pairs(Cache) do
         local idx = contains(data.apps, appId)
         if idx then
@@ -800,6 +815,7 @@ local function purgeInstalls(appId)
         for cid, data in pairs(Cache) do
             if contains(data.apps, appId) then persist(cid) end
         end
+        PurgingIds[appId] = nil
     end)
 end
 
