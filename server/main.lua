@@ -684,6 +684,11 @@ local function installApp(src, appId, force, expectedCid)
             rollback()
             return result(false, Config.Locale.saveFailed)
         end
+        -- 待っている間に退職 / 降格して利用条件を満たさなくなっていたら消費しない
+        if not hasAccess(current, app) then
+            rollback()
+            return result(false, Config.Locale.noAccess)
+        end
         -- 待っている間にアプリが削除 / 差し替え / アンインストールされていたら消費しない
         if Catalog[appId] ~= app or not contains(data.apps, appId) then
             rollback()
@@ -840,11 +845,19 @@ local function purgeInstalls(appId)
     CreateThread(function()
         while not dbReady do Wait(50) end
         local pattern = appId:gsub('[_%%\\]', '\\%0') -- JSON_SEARCH のワイルドカードをエスケープ
-        local ok, err = pcall(MySQL.query.await,
-            'UPDATE `cam_tablet` SET `apps` = JSON_REMOVE(`apps`, JSON_UNQUOTE(JSON_SEARCH(`apps`, \'one\', ?))) ' ..
-            'WHERE JSON_VALID(`apps`) AND JSON_SEARCH(`apps`, \'one\', ?) IS NOT NULL',
-            { pattern, pattern })
-        if not ok then lib.print.error(('failed to purge installs of %s: %s'):format(appId, err)) end
+        -- 失敗した場合は成功するまでやり直す。それまで ID は予約したまま (オフラインのキャラクターに残ったインストールを
+        -- 同じ ID の別アプリに引き継がせないように)
+        local attempt = 0
+        while true do
+            local ok, err = pcall(MySQL.query.await,
+                'UPDATE `cam_tablet` SET `apps` = JSON_REMOVE(`apps`, JSON_UNQUOTE(JSON_SEARCH(`apps`, \'one\', ?))) ' ..
+                'WHERE JSON_VALID(`apps`) AND JSON_SEARCH(`apps`, \'one\', ?) IS NOT NULL',
+                { pattern, pattern })
+            if ok then break end
+            attempt = attempt + 1
+            lib.print.error(('failed to purge installs of %s (attempt %d, retrying): %s'):format(appId, attempt, err))
+            Wait(math.min(attempt * 5000, 60000))
+        end
         -- 掃除中に同じIDで再登録・再インストールされていた場合、UPDATE が後から消してしまうので
         -- ログイン中キャラクター (キャッシュが正) は書き戻す
         for cid, data in pairs(Cache) do
