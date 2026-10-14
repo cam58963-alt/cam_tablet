@@ -222,14 +222,17 @@ local function removeApp(id)
     return true
 end
 
-CreateThread(function()
+-- config.lua のアプリと専用アイテムを登録 (起動時と、RemoveApp の掃除が終わって ID が空いた時)
+local function registerConfigApps()
     for i = 1, #Config.Apps do
-        registerApp(Config.Apps[i], GetCurrentResourceName())
+        if not Catalog[Config.Apps[i].id] then registerApp(Config.Apps[i], GetCurrentResourceName()) end
     end
     for item, appId in pairs(Config.AppItems) do
-        registerDeviceItem(item, appId, GetCurrentResourceName())
+        if not DeviceItems[item] then registerDeviceItem(item, appId, GetCurrentResourceName()) end
     end
-end)
+end
+
+CreateThread(registerConfigApps)
 
 -- groups ({ police = 0 }) のどれかを必要なグレード以上で持っているか
 -- primary は今の職業/ギャング (PlayerData.job / gang)、all は掛け持ち中の物 (PlayerData.jobs / gangs: 名前 -> グレード)
@@ -944,7 +947,9 @@ local function purgeInstalls(appId)
         DeleteResourceKvp('owner:' .. appId)
         DeleteResourceKvp('purge:' .. appId)
         PurgingIds[appId] = nil
-        -- 掃除中に登録を断られたリソース (起動時の cam_tablet:ready で登録した物など) に登録し直してもらう
+        -- 掃除中に登録を断られたアプリ (config.lua の物 / 起動時の cam_tablet:ready で登録した物など) を登録し直す
+        registerConfigApps()
+        catalogChanged()
         TriggerEvent('cam_tablet:ready')
     end)
 end
