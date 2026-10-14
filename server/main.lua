@@ -1,0 +1,1054 @@
+local Catalog, CatalogOrder = {}, {}
+local DeviceItems = {}  -- item -> { app = appId, resource = resource, appOwner, fromApp }  (アプリ専用端末アイテム)
+local PurgingIds = {}   -- RemoveApp の DB 掃除中の app id
+local IdOwner = {}      -- app id -> 最初に登録したリソース (停止後も RemoveApp するまで予約)
+
+-- ID の持ち主は KVP にも保存し、cam_tablet を再起動しても引き継ぐ (登録順で保存済みのインストールが別アプリに渡らないように)
+local function ownerOf(id)
+    if IdOwner[id] then return IdOwner[id] end
+    local stored = GetResourceKvpString('owner:' .. id)
+    if stored and stored ~= '' then
+        IdOwner[id] = stored
+        return stored
+    end
+end
+
+local function setOwner(id, resource)
+    if GetResourceKvpString('owner:' .. id) ~= resource then SetResourceKvp('owner:' .. id, resource) end
+    IdOwner[id] = resource
+end
+
+-- RemoveApp の掃除が終わる前に cam_tablet が止まっていたら、その ID の登録を止めておき起動後に掃除をやり直す
+-- (KVP の予約は掃除が終わってから消すので、それまで別のリソースには渡らない)
+local PendingPurges = {}
+do
+    local handle = StartFindKvp('purge:')
+    while true do
+        local key = FindKvp(handle)
+        if not key then break end
+        local id = key:sub(7) -- 'purge:' の後ろ
+        PurgingIds[id] = true
+        PendingPurges[#PendingPurges + 1] = id
+    end
+    EndFindKvp(handle)
+end
+local Cache = {}       -- citizenid -> { apps, settings, notes, events }
+
+---------------------------------------------------------------------
+-- Utils
+---------------------------------------------------------------------
+
+local function clip(value, max)
+    local s = tostring(value or '')
+    local len = utf8.len(s)
+    if not len then return '' end
+    if len <= max then return s end
+    return s:sub(1, utf8.offset(s, max + 1) - 1)
+end
+
+local function contains(list, value)
+    for i = 1, #list do
+        if list[i] == value then return i end
+    end
+end
+
+local function copy(list)
+    local out = {}
+    for i = 1, #list do out[i] = list[i] end
+    return out
+end
+
+local function getPlayer(src)
+    return exports.qbx_core:GetPlayer(src)
+end
+
+local function itemCount(src, item)
+    return exports.ox_inventory:GetItemCount(src, item) or 0
+end
+
+local itemLabels = {}
+local function itemLabel(item)
+    if itemLabels[item] == nil then
+        local data = exports.ox_inventory:Items(item)
+        itemLabels[item] = data and data.label or item
+    end
+    return itemLabels[item]
+end
+
+local jobLabels
+local function groupLabel(name)
+    if not jobLabels then
+        jobLabels = {}
+        local ok, jobs = pcall(function() return exports.qbx_core:GetJobs() end)
+        if ok and jobs then
+            for k, v in pairs(jobs) do jobLabels[k] = v.label end
+        end
+        local ok2, gangs = pcall(function() return exports.qbx_core:GetGangs() end)
+        if ok2 and gangs then
+            for k, v in pairs(gangs) do jobLabels[k] = jobLabels[k] or v.label end
+        end
+    end
+    return jobLabels[name] or name
+end
+
+---------------------------------------------------------------------
+-- App catalog
+---------------------------------------------------------------------
+
+local function normalizeGroups(groups)
+    if type(groups) ~= 'table' then return nil end
+    local out = {}
+    for k, v in pairs(groups) do
+        if type(k) == 'number' then
+            out[v] = 0
+        else
+            out[k] = tonumber(v) or 0
+        end
+    end
+    return next(out) and out or nil
+end
+
+--- アイテムを使うと、そのアプリだけを開く専用端末モードでタブレットを起動する
+--- fromApp = true は RegisterApp の deviceItem から作られた紐付け (アプリの再登録時に付け直す対象)
+local function registerDeviceItem(item, appId, resource, fromApp)
+    if type(item) ~= 'string' or item == '' or type(appId) ~= 'string' then return false end
+    local existing = DeviceItems[item]
+    if existing and existing.resource ~= resource then
+        -- 別のリソースが登録済みのアイテムは付け替えさせない
+        lib.print.warn(('RegisterAppItem: %s tried to take over item %s owned by %s'):format(resource, item, existing.resource))
+        return false
+    end
+    local isNew = existing == nil
+    -- 紐付けた時点のアプリの登録元を覚える。登録元が変わった (同じ ID を別リソースが登録した) 場合は許可しない
+    -- (config の AppItems のようにアプリ登録前に紐付けた場合は、最初にそのアプリを登録したリソースに結び付ける)
+    local target = Catalog[appId]
+    DeviceItems[item] = { app = appId, resource = resource, appOwner = target and target.resource or nil, fromApp = fromApp == true }
+    if isNew then
+        exports.qbx_core:CreateUseableItem(item, function(source)
+            local entry = DeviceItems[item]
+            if not entry then return end
+            TriggerClientEvent('cam_tablet:client:open', source, entry.app, Config.AppItemStandalone, true)
+        end)
+    end
+    return true
+end
+
+-- iframe の URL からページを持っているリソース名を取り出す (SDK の CamTablet.post() の送信先)
+local function urlResource(url)
+    if type(url) ~= 'string' then return nil end
+    return url:match('^nui://([^/]+)/') or url:match('^https?://cfx%-nui%-([^/]+)/')
+end
+
+local function registerApp(app, resource)
+    if type(app) ~= 'table' or type(app.id) ~= 'string' or not app.id:match('^[%w_%-]+$') then
+        lib.print.warn(('RegisterApp: invalid app id (%s) from %s'):format(tostring(app and app.id), resource))
+        return false
+    end
+    if app.url ~= nil and type(app.url) ~= 'string' then
+        lib.print.warn(('RegisterApp: url must be a string (%s)'):format(app.id))
+        return false
+    end
+    if PurgingIds[app.id] then
+        -- RemoveApp の掃除が終わる前に同じ ID を使うと、新しいインストールまで消えるため拒否 (少し待って再登録)
+        lib.print.warn(('RegisterApp: %s is still being removed, try again shortly'):format(app.id))
+        return false
+    end
+    local owner = ownerOf(app.id)
+    if owner and owner ~= resource then
+        -- 別のリソースの ID は上書きさせない (他のアプリの URL を差し替えられないように)
+        -- 登録元が停止していても予約したまま (保存済みのインストールが別のアプリに引き継がれないように)。
+        -- ID を譲る時は、登録元が RemoveApp でインストールごと削除する
+        lib.print.warn(('RegisterApp: %s tried to use app id %s owned by %s (to release it: RemoveApp from %s, or the console command cam_tablet_releaseid %s)')
+            :format(resource, app.id, owner, owner, app.id))
+        return false
+    end
+
+    local entry = {
+        id = app.id,
+        label = app.label or app.id,
+        description = app.description or '',
+        icon = app.icon or 'fa-solid fa-cube',
+        color = app.color or '#5e5ce6',
+        category = app.category or 'その他',
+        developer = app.developer or 'Unknown',
+        size = tonumber(app.size) or 10,
+        url = app.url,
+        system = app.system == true,
+        autoInstall = app.autoInstall == true,
+        featured = app.featured == true,
+        jobs = normalizeGroups(app.jobs),
+        gangs = normalizeGroups(app.gangs),
+        item = app.item,
+        consumeItem = app.consumeItem == true,
+        resource = resource, -- 登録元 (停止時に自動削除する対象)
+        uiResource = urlResource(app.url) or resource,
+    }
+
+    if not Catalog[entry.id] then
+        CatalogOrder[#CatalogOrder + 1] = entry.id
+    end
+    Catalog[entry.id] = entry
+    setOwner(entry.id, resource)
+
+    -- deviceItem = 'racing_tablet' または { 'a', 'b' } でアプリ専用アイテムを登録
+    -- 再登録時は、前回の deviceItem で付けた紐付けを消してから付け直す (deviceItem を外した / 変えた場合に古いアイテムが残らないように)
+    -- RegisterAppItem で別に付けた紐付けはそのまま残す
+    for item, dev in pairs(DeviceItems) do
+        if dev.app == entry.id and dev.resource == resource and dev.fromApp then DeviceItems[item] = nil end
+    end
+    local devices = app.deviceItem
+    if type(devices) == 'string' then devices = { devices } end
+    if type(devices) == 'table' then
+        for i = 1, #devices do registerDeviceItem(devices[i], entry.id, resource, true) end
+    end
+    -- アプリ登録前に作られた紐付けは、最初に登録したリソースのアプリに結び付ける
+    -- (そのリソースが止まった後に別リソースが同じ ID を登録しても、古いアイテムでは開けない)
+    for _, dev in pairs(DeviceItems) do
+        if dev.app == entry.id and not dev.appOwner then dev.appOwner = resource end
+    end
+    return true
+end
+
+local function removeApp(id)
+    -- 専用端末アイテムの紐付けも消す (同じIDで別のアプリが登録された時に古いアイテムで開けないように)
+    -- 登録元が停止中でカタログに無い場合も、残っている紐付けは消す
+    for item, entry in pairs(DeviceItems) do
+        if entry.app == id then DeviceItems[item] = nil end
+    end
+    if not Catalog[id] then return false end
+    Catalog[id] = nil
+    local idx = contains(CatalogOrder, id)
+    if idx then table.remove(CatalogOrder, idx) end
+    return true
+end
+
+-- config.lua のアプリと専用アイテムを登録 (起動時と、RemoveApp の掃除が終わって ID が空いた時)
+local function registerConfigApps()
+    for i = 1, #Config.Apps do
+        if not Catalog[Config.Apps[i].id] then registerApp(Config.Apps[i], GetCurrentResourceName()) end
+    end
+    for item, appId in pairs(Config.AppItems) do
+        if not DeviceItems[item] then registerDeviceItem(item, appId, GetCurrentResourceName()) end
+    end
+end
+
+CreateThread(registerConfigApps)
+
+-- groups ({ police = 0 }) のどれかを必要なグレード以上で持っているか
+-- primary は今の職業/ギャング (PlayerData.job / gang)、all は掛け持ち中の物 (PlayerData.jobs / gangs: 名前 -> グレード)
+local function meetsGroups(groups, primary, all)
+    if not groups then return false end
+    if primary and groups[primary.name] and ((primary.grade and primary.grade.level) or 0) >= groups[primary.name] then
+        return true
+    end
+    if Config.MultiJob and type(all) == 'table' then
+        for name, grade in pairs(all) do
+            if groups[name] and (tonumber(grade) or 0) >= groups[name] then return true end
+        end
+    end
+    return false
+end
+
+local function hasAccess(player, app)
+    if not app.jobs and not app.gangs then return true end
+    local pd = player.PlayerData
+    return meetsGroups(app.jobs, pd.job, pd.jobs) or meetsGroups(app.gangs, pd.gang, pd.gangs)
+end
+
+local function groupNames(groups)
+    if not groups then return nil end
+    local out = {}
+    for name in pairs(groups) do out[#out + 1] = groupLabel(name) end
+    return out
+end
+
+local function buildCatalog(src, player, forceId)
+    local list = {}
+    for i = 1, #CatalogOrder do
+        local app = Catalog[CatalogOrder[i]]
+        -- 専用アイテムで開いた場合は職業制限に関係なく対象アプリを使える
+        local access = app.id == forceId or hasAccess(player, app)
+        if access or not Config.HideRestrictedApps then
+            list[#list + 1] = {
+                id = app.id,
+                label = app.label,
+                description = app.description,
+                icon = app.icon,
+                color = app.color,
+                category = app.category,
+                developer = app.developer,
+                size = app.size,
+                url = app.url,
+                system = app.system,
+                autoInstall = app.autoInstall or nil,
+                featured = app.featured,
+                locked = not access,
+                groups = groupNames(app.jobs) or groupNames(app.gangs),
+                item = app.item,
+                itemLabel = app.item and itemLabel(app.item) or nil,
+                hasItem = app.item and itemCount(src, app.item) > 0 or nil,
+                consumeItem = app.consumeItem or nil,
+                resource = app.uiResource,
+            }
+        end
+    end
+    return list
+end
+
+---------------------------------------------------------------------
+-- Persistence
+---------------------------------------------------------------------
+
+local dbReady = false
+
+CreateThread(function()
+    local ok, err = pcall(MySQL.query.await, [[
+        CREATE TABLE IF NOT EXISTS `cam_tablet` (
+            `citizenid` VARCHAR(50) NOT NULL,
+            `apps` LONGTEXT NULL,
+            `settings` LONGTEXT NULL,
+            `notes` LONGTEXT NULL,
+            `events` LONGTEXT NULL,
+            `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`citizenid`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ]])
+    if not ok then lib.print.error(('failed to create table: %s'):format(err)) end
+    -- 失敗してもリクエストを待たせ続けないよう準備完了にする (エラーは各クエリ側でも出る)
+    dbReady = true
+end)
+
+local function decode(str, fallback)
+    if type(str) ~= 'string' or str == '' then return fallback end
+    local ok, result = pcall(json.decode, str)
+    if ok and type(result) == 'table' then return result end
+    return fallback
+end
+
+local SAVE_QUERY = 'INSERT INTO `cam_tablet` (`citizenid`, `apps`, `settings`, `notes`, `events`) VALUES (?, ?, ?, ?, ?) ' ..
+    'ON DUPLICATE KEY UPDATE `apps` = VALUES(`apps`), `settings` = VALUES(`settings`), `notes` = VALUES(`notes`), `events` = VALUES(`events`)'
+
+local Writing, PendingWrite = {}, {} -- citizenid -> true / 次に書き込むデータ
+local LastWriteOk = {}                -- citizenid -> 直近の書き込みが成功したか
+local EvictAfterWrite = {}            -- citizenid -> 書き込み完了後にキャッシュを破棄する
+local SourceCid = {}                  -- source -> citizenid
+
+local function isActive(cid)
+    for _, active in pairs(SourceCid) do
+        if active == cid then return true end
+    end
+    return false
+end
+
+-- 1キャラクターにつき書き込みは常に1本だけ。書き込み中の保存はまとめて、終わった後に最新の状態で1回書く
+-- (並列に投げると古いスナップショットが後から完了して新しい内容を上書きすることがある)
+--- data を省略するとキャッシュの内容を保存する (キャッシュ破棄後でも手元のデータを確実に保存できるよう指定可能)
+local function persist(cid, data)
+    data = data or Cache[cid]
+    if not data then return end
+    if Writing[cid] then
+        PendingWrite[cid] = data
+        return
+    end
+
+    Writing[cid] = true
+    CreateThread(function()
+        while data do
+            local ok, err = pcall(MySQL.query.await, SAVE_QUERY,
+                { cid, json.encode(data.apps), json.encode(data.settings), json.encode(data.notes), json.encode(data.events) })
+            if not ok then lib.print.error(('failed to save %s: %s'):format(cid, err)) end
+            LastWriteOk[cid] = ok
+            data = PendingWrite[cid]
+            PendingWrite[cid] = nil
+        end
+        Writing[cid] = nil
+        -- ログアウト済みなら、書き込みが終わってからキャッシュを破棄する (途中で消すと再ログイン時に古いDBを読む)
+        if EvictAfterWrite[cid] then
+            EvictAfterWrite[cid] = nil
+            if not isActive(cid) then Cache[cid] = nil end
+        end
+    end)
+end
+
+--- キャラクターのキャッシュを破棄する。書き込み中なら完了後に破棄する
+local function evict(cid)
+    if not cid then return end
+    if Writing[cid] then
+        EvictAfterWrite[cid] = true
+    else
+        Cache[cid] = nil
+    end
+end
+
+--- 保存して書き込み完了まで待つ。成功したら true (アイテム消費など取り消せない処理の前に使う)
+local function persistAwait(cid, data)
+    persist(cid, data)
+    while Writing[cid] do Wait(50) end
+    return LastWriteOk[cid] == true
+end
+
+local LoadSeq, LoadsInFlight = 0, {} -- 実行中の読み込み (番号 -> true)。RemoveApp の掃除がこれより前の読み込みを待つのに使う
+
+-- RemoveApp で掃除中の ID を取り除く (掃除の UPDATE より前の行を読んだ場合に残っているため)
+local function stripPurging(apps)
+    local stripped = false
+    for i = #apps, 1, -1 do
+        if PurgingIds[apps[i]] then
+            table.remove(apps, i)
+            stripped = true
+        end
+    end
+    return stripped
+end
+
+local function loadData(cid)
+    if Cache[cid] then return Cache[cid] end
+    -- 初回起動時はテーブル作成が終わるまで待つ
+    while not dbReady do Wait(50) end
+    if Cache[cid] then return Cache[cid] end
+
+    LoadSeq = LoadSeq + 1
+    local seq = LoadSeq
+    LoadsInFlight[seq] = true
+    local ok, row = pcall(MySQL.single.await, 'SELECT `apps`, `settings`, `notes`, `events` FROM `cam_tablet` WHERE `citizenid` = ?', { cid })
+    LoadsInFlight[seq] = nil
+    if not ok then error(row, 0) end
+    local data
+    if row then
+        data = {
+            apps = decode(row.apps, copy(Config.DefaultApps)),
+            settings = decode(row.settings, {}),
+            notes = decode(row.notes, {}),
+            events = decode(row.events, {}),
+        }
+    else
+        data = { apps = copy(Config.DefaultApps), settings = {}, notes = {}, events = {} }
+    end
+
+    -- DB を待っている間に別の処理が先に読み込み済みなら、そちらを使う (後から上書きすると先の変更が消える)
+    if Cache[cid] then return Cache[cid] end
+    -- DB を待っている間にログアウト / 切断していたらキャッシュに入れない (破棄済みのため残り続けてしまう)
+    -- 呼び出し元は保存できないデータを書き換えることになるので、失敗として扱わせる
+    if not isActive(cid) then return nil end
+    local stripped = stripPurging(data.apps)
+    Cache[cid] = data
+    if not row or stripped then persist(cid) end
+    return data
+end
+
+-- システムアプリ (後から登録された外部アプリも含む) は常にインストール済みにする
+local function ensureSystemApps(data, cid)
+    local changed = false
+    for i = #CatalogOrder, 1, -1 do
+        local app = Catalog[CatalogOrder[i]]
+        if app.system and not contains(data.apps, app.id) then
+            table.insert(data.apps, 1, app.id)
+            changed = true
+        end
+    end
+    if changed then persist(cid) end
+end
+
+-- autoInstall = true のアプリは、利用条件を満たしている人に自動でインストールする
+local function installAutoApps(data, player, cid)
+    local added = {}
+    for i = 1, #CatalogOrder do
+        local app = Catalog[CatalogOrder[i]]
+        if app.autoInstall and not contains(data.apps, app.id) and hasAccess(player, app) then
+            data.apps[#data.apps + 1] = app.id
+            added[#added + 1] = app.label
+        end
+    end
+    if #added > 0 then persist(cid) end
+    return added
+end
+
+-- 職業/ギャング変更などで利用条件を満たさなくなったアプリは自動でアンインストールする
+local function pruneRestrictedApps(data, player, cid)
+    local removed = {}
+    for i = #data.apps, 1, -1 do
+        local app = Catalog[data.apps[i]]
+        if app and not app.system and not hasAccess(player, app) then
+            table.remove(data.apps, i)
+            table.insert(removed, 1, app.label)
+        end
+    end
+    if #removed > 0 then persist(cid) end
+    return removed
+end
+
+local function getData(src)
+    local player = getPlayer(src)
+    if not player then return end
+    local cid = player.PlayerData.citizenid
+    -- 切断せずにキャラクターを切り替えた場合、前のキャラクターのキャッシュを破棄する
+    local previous = SourceCid[src]
+    SourceCid[src] = cid
+    if previous and previous ~= cid then evict(previous) end
+    EvictAfterWrite[cid] = nil
+    local data = loadData(cid)
+    if not data then return end -- 読み込み中にログアウトした
+    ensureSystemApps(data, cid)
+    local removed = pruneRestrictedApps(data, player, cid)
+    local added = installAutoApps(data, player, cid)
+    return data, player, cid, removed, added
+end
+
+-- ログアウト直後の最後の保存を受け付ける時間。サーバーのログアウト処理はクライアントより先に走るため、
+-- クライアントがログアウトを受け取ってから送る保留中の保存 (メモ・予定・設定) はプレイヤーが消えた後に届く
+local LOGOUT_GRACE = 10000
+local LoggedOut = {} -- source -> { cid = citizenid, expires = GetGameTimer() }
+
+local function onPlayerLeft(src, dropped)
+    local cid = SourceCid[src]
+    SourceCid[src] = nil
+    LoggedOut[src] = nil
+    if not cid then return end
+    -- 切断した場合はもう保存が届かない (source も別の人に再利用される) ので猶予なしで破棄する
+    if dropped then return evict(cid) end
+    LoggedOut[src] = { cid = cid, expires = GetGameTimer() + LOGOUT_GRACE }
+    -- キャッシュは猶予が終わってから破棄する (それまでに同じキャラクターで入り直していれば残す)
+    SetTimeout(LOGOUT_GRACE, function()
+        local left = LoggedOut[src]
+        if left and left.cid == cid then LoggedOut[src] = nil end
+        if not isActive(cid) then evict(cid) end
+    end)
+end
+
+AddEventHandler('playerDropped', function() onPlayerLeft(source, true) end)
+
+--- 保存系の処理用: タブレットを開いた時のキャラクター (expectedCid) が今のキャラクターと同じ時だけデータを返す
+--- (ログアウト時に送られた前のキャラクターの保存が、次のキャラクターに書き込まれないように)
+--- afterLogout = true なら、ログアウト直後に届いたそのキャラクターの保存も受け付ける (メモ・設定など。インストールは不可)
+local function getDataFor(src, expectedCid, afterLogout)
+    if type(expectedCid) ~= 'string' then return nil end
+    local player = getPlayer(src)
+    if player and player.PlayerData.citizenid == expectedCid then return getData(src) end
+    local left = afterLogout and LoggedOut[src]
+    if left and left.cid == expectedCid and GetGameTimer() <= left.expires and Cache[expectedCid] then
+        return Cache[expectedCid], nil, expectedCid
+    end
+    return nil
+end
+-- キャラクター選択に戻った時 (QBox 本体のイベント)
+AddEventHandler('qbx_core:server:playerLoggedOut', onPlayerLeft)
+
+---------------------------------------------------------------------
+-- Validation
+---------------------------------------------------------------------
+
+local wallpaperIds = {}
+for i = 1, #Config.Wallpapers do wallpaperIds[Config.Wallpapers[i].id] = true end
+
+local function validUrl(url)
+    if type(url) ~= 'string' or #url > 512 then return false end
+    if not url:match('^https?://') then return false end
+    -- CSS の url() を壊す文字は拒否
+    if url:find('[%s"\'%(%)\\<>]') then return false end
+    return true
+end
+
+local SettingsSchema = {
+    theme = function(v) return v == 'dark' or v == 'light' end,
+    accent = function(v) return type(v) == 'string' and v:match('^#%x%x%x%x%x%x$') ~= nil end,
+    wallpaper = function(v)
+        if type(v) ~= 'string' then return false end
+        local id = v:match('^preset:(.+)$')
+        if id then return wallpaperIds[id] == true end
+        local url = v:match('^url:(.+)$')
+        return Config.AllowCustomWallpaper and url ~= nil and validUrl(url)
+    end,
+    wallpaperDim = function(v) return type(v) == 'number' and v >= 0 and v <= 80 end,
+    brightness = function(v) return type(v) == 'number' and v >= 30 and v <= 100 end,
+    scale = function(v) return type(v) == 'number' and v >= 60 and v <= 120 end,
+    clock24 = function(v) return type(v) == 'boolean' end,
+    timeSource = function(v) return v == 'real' or v == 'game' end,
+    sounds = function(v) return type(v) == 'boolean' end,
+    toasts = function(v) return type(v) == 'boolean' end,
+    lockScreen = function(v) return type(v) == 'boolean' end,
+    passcode = function(v) return type(v) == 'string' and (v == '' or v:match('^%d%d%d%d$') ~= nil) end,
+    widgets = function(v) return type(v) == 'boolean' end,
+    labels = function(v) return type(v) == 'boolean' end,
+    iconSize = function(v) return v == 'small' or v == 'medium' or v == 'large' end,
+    deviceName = function(v) return type(v) == 'string' end,
+    dock = function(v)
+        if v == false then return true end -- false = デフォルトに戻す
+        if type(v) ~= 'table' or #v > 6 then return false end
+        for i = 1, #v do
+            if type(v[i]) ~= 'string' or #v[i] > 64 then return false end
+        end
+        return true
+    end,
+}
+
+local function sanitizeSettings(current, input)
+    if type(input) ~= 'table' then return current end
+    local out = {}
+    for k, v in pairs(current) do out[k] = v end
+    for key, check in pairs(SettingsSchema) do
+        local v = input[key]
+        if v ~= nil and check(v) then
+            if key == 'deviceName' then v = clip(v, 24) end
+            if type(v) == 'number' then v = math.floor(v) end
+            if key == 'dock' and v == false then v = nil end
+            out[key] = v
+        end
+    end
+    return out
+end
+
+local function sanitizeNotes(input)
+    if type(input) ~= 'table' then return nil end
+    local L = Config.Limits
+    local out = {}
+    for i = 1, math.min(#input, L.notes) do
+        local n = input[i]
+        if type(n) == 'table' then
+            out[#out + 1] = {
+                id = clip(n.id or i, 32),
+                title = clip(n.title, L.noteTitle),
+                body = clip(n.body, L.noteBody),
+                pinned = n.pinned == true,
+                updated = tonumber(n.updated) or (os.time() * 1000),
+            }
+        end
+    end
+    return out
+end
+
+local function sanitizeEvents(input)
+    if type(input) ~= 'table' then return nil end
+    local L = Config.Limits
+    local out = {}
+    for i = 1, math.min(#input, L.events) do
+        local e = input[i]
+        if type(e) == 'table' and type(e.date) == 'string' and e.date:match('^%d%d%d%d%-%d%d%-%d%d$') then
+            out[#out + 1] = {
+                id = clip(e.id or i, 32),
+                date = e.date,
+                time = type(e.time) == 'string' and e.time:match('^%d%d:%d%d$') and e.time or '',
+                text = clip(e.text, L.eventText),
+                color = type(e.color) == 'string' and e.color:match('^#%x%x%x%x%x%x$') and e.color or nil,
+            }
+        end
+    end
+    return out
+end
+
+local function canOpen(src)
+    if not Config.RequireItem then return true end
+    if itemCount(src, Config.TabletItem) > 0 then return true end
+    return false
+end
+
+local function hasDeviceItem(src, appId)
+    -- 対象アプリが存在しない (登録元が停止中など) なら許可しない
+    local app = appId and Catalog[appId]
+    if not app then return false end
+    for item, entry in pairs(DeviceItems) do
+        if entry.app == appId and entry.appOwner == app.resource and itemCount(src, item) > 0 then
+            return true
+        end
+    end
+    return false
+end
+
+local function filterInstalled(apps)
+    local out = {}
+    for i = 1, #apps do
+        if Catalog[apps[i]] then out[#out + 1] = apps[i] end
+    end
+    return out
+end
+
+---------------------------------------------------------------------
+-- Callbacks
+---------------------------------------------------------------------
+
+lib.callback.register('cam_tablet:server:getData', function(src, appId, viaDevice)
+    if type(appId) ~= 'string' then appId = nil end
+    local device = viaDevice == true and hasDeviceItem(src, appId)
+    if not device and not canOpen(src) then return false end
+
+    local data, player, _, removed, added = getData(src)
+    if not data then return false end
+
+    -- 初回はDB読み込みを待つので、その間にアイテムを手放していないか確認し直す (専用アイテム / タブレット本体の両方)
+    if device then device = hasDeviceItem(src, appId) end
+    if not device and not canOpen(src) then return false end
+
+    return {
+        device = device,
+        removed = #removed > 0 and removed or nil,
+        added = #added > 0 and added or nil,
+        catalog = buildCatalog(src, player, device and appId or nil),
+        installed = filterInstalled(data.apps),
+        settings = data.settings,
+        notes = data.notes,
+        events = data.events,
+    }
+end)
+
+local function result(ok, message, extra)
+    local r = extra or {}
+    r.ok = ok
+    r.message = message
+    return r
+end
+
+local function installApp(src, appId, force, expectedCid)
+    local data, player, cid
+    if force then
+        data, player, cid = getData(src)
+    else
+        data, player, cid = getDataFor(src, expectedCid)
+    end
+    if not data then return result(false, Config.Locale.notFound) end
+
+    local app = Catalog[appId]
+    if not app then return result(false, Config.Locale.notFound) end
+    if contains(data.apps, appId) then return result(false, Config.Locale.already, { installed = filterInstalled(data.apps) }) end
+
+    if not force then
+        if not canOpen(src) then return result(false, Config.Locale.noTablet) end
+        if not hasAccess(player, app) then return result(false, Config.Locale.noAccess) end
+        if app.item then
+            if itemCount(src, app.item) < 1 then
+                return result(false, Config.Locale.needItem:format(itemLabel(app.item)))
+            end
+        end
+    end
+
+    data.apps[#data.apps + 1] = appId
+
+    if not force and app.item and app.consumeItem then
+        -- アイテム消費は取り消せないので、インストールが DB に保存できたのを確認してから消費する
+        local function rollback()
+            local idx = contains(data.apps, appId)
+            if idx then table.remove(data.apps, idx) end
+            persist(cid, data)
+        end
+        if not persistAwait(cid, data) then
+            rollback()
+            return result(false, Config.Locale.saveFailed)
+        end
+        -- 保存を待っている間にログアウト / 切断して別キャラクターになっていたら消費しない
+        local current = getPlayer(src)
+        if not current or current.PlayerData.citizenid ~= cid then
+            rollback()
+            return result(false, Config.Locale.saveFailed)
+        end
+        -- 待っている間に退職 / 降格して利用条件を満たさなくなっていたら消費しない
+        if not hasAccess(current, app) then
+            rollback()
+            return result(false, Config.Locale.noAccess)
+        end
+        -- 待っている間にアプリが削除 / 差し替え / アンインストールされていたら消費しない
+        if Catalog[appId] ~= app or not contains(data.apps, appId) then
+            rollback()
+            return result(false, Config.Locale.notFound)
+        end
+        if not exports.ox_inventory:RemoveItem(src, app.item, 1) then
+            rollback()
+            return result(false, Config.Locale.needItem:format(itemLabel(app.item)))
+        end
+    else
+        persist(cid)
+    end
+
+    return result(true, Config.Locale.installed, { installed = filterInstalled(data.apps) })
+end
+
+lib.callback.register('cam_tablet:server:install', function(src, appId, expectedCid)
+    if type(appId) ~= 'string' then return result(false, Config.Locale.notFound) end
+    return installApp(src, appId, false, expectedCid)
+end)
+
+lib.callback.register('cam_tablet:server:uninstall', function(src, appId, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid)
+    if not data or type(appId) ~= 'string' then return result(false, Config.Locale.notFound) end
+
+    local app = Catalog[appId]
+    if app and (app.system or app.autoInstall) then return result(false, Config.Locale.system) end
+
+    local idx = contains(data.apps, appId)
+    if idx then
+        table.remove(data.apps, idx)
+        persist(cid)
+    end
+    return result(true, nil, { installed = filterInstalled(data.apps) })
+end)
+
+lib.callback.register('cam_tablet:server:reorder', function(src, order, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
+    if not data or type(order) ~= 'table' then return false end
+
+    -- 送られてきた順番のうち、インストール済みの物だけ採用し、漏れた物は末尾に残す
+    local out, seen = {}, {}
+    for i = 1, #order do
+        local id = order[i]
+        if type(id) == 'string' and not seen[id] and contains(data.apps, id) then
+            out[#out + 1] = id
+            seen[id] = true
+        end
+    end
+    for i = 1, #data.apps do
+        if not seen[data.apps[i]] then out[#out + 1] = data.apps[i] end
+    end
+
+    data.apps = out
+    persist(cid)
+    return true
+end)
+
+lib.callback.register('cam_tablet:server:saveSettings', function(src, settings, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
+    if not data then return false end
+    data.settings = sanitizeSettings(data.settings, settings)
+    persist(cid)
+    return data.settings
+end)
+
+lib.callback.register('cam_tablet:server:resetSettings', function(src, _, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
+    if not data then return false end
+    data.settings = {}
+    persist(cid)
+    return data.settings
+end)
+
+lib.callback.register('cam_tablet:server:saveNotes', function(src, notes, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
+    local clean = sanitizeNotes(notes)
+    if not data or not clean then return false end
+    data.notes = clean
+    persist(cid)
+    return true
+end)
+
+lib.callback.register('cam_tablet:server:saveEvents', function(src, events, expectedCid)
+    local data, _, cid = getDataFor(src, expectedCid, true)
+    local clean = sanitizeEvents(events)
+    if not data or not clean then return false end
+    data.events = clean
+    persist(cid)
+    return true
+end)
+
+---------------------------------------------------------------------
+-- Usable items
+---------------------------------------------------------------------
+
+CreateThread(function()
+    exports.qbx_core:CreateUseableItem(Config.TabletItem, function(source)
+        TriggerClientEvent('cam_tablet:client:open', source)
+    end)
+end)
+
+---------------------------------------------------------------------
+-- Exports (server)
+---------------------------------------------------------------------
+
+local function catalogChanged()
+    TriggerClientEvent('cam_tablet:client:catalogChanged', -1)
+end
+
+--- 他のリソースからアプリを登録する (フィールドは config.lua の Config.Apps と同じ)
+--- exports.cam_tablet:RegisterApp({ id = 'myapp', label = 'My App', url = 'nui://my_resource/html/index.html', ... })
+--- 複数まとめて登録する場合は配列で渡せます: exports.cam_tablet:RegisterApp({ {...}, {...} })
+--- 登録したリソースが停止すると自動で削除されます
+exports('RegisterApp', function(app)
+    local resource = GetInvokingResource() or GetCurrentResourceName()
+    local ok = true
+    if type(app) == 'table' and app[1] then
+        for i = 1, #app do ok = registerApp(app[i], resource) and ok end
+    else
+        ok = registerApp(app, resource)
+    end
+    catalogChanged()
+    return ok
+end)
+
+--- アプリ専用端末アイテムを登録する (アイテムは ox_inventory に別途定義してください)
+--- exports.cam_tablet:RegisterAppItem('racing_tablet', 'racing')
+exports('RegisterAppItem', function(item, appId)
+    local ok = registerDeviceItem(item, appId, GetInvokingResource() or GetCurrentResourceName())
+    -- 付け替え時に、開いている専用端末の許可を取り直させる
+    if ok then catalogChanged() end
+    return ok
+end)
+
+exports('GetApps', function()
+    local list = {}
+    for i = 1, #CatalogOrder do list[i] = Catalog[CatalogOrder[i]] end
+    return list
+end)
+
+-- 明示的に削除したアプリは、全プレイヤーのインストール済みからも消す
+-- (同じIDで再登録した時に、必要アイテムなどの条件を通らずにインストール済み扱いにならないように)
+-- ※ リソース停止による一時的な削除ではインストール済みのまま残す
+local function purgeInstalls(appId)
+    PurgingIds[appId] = true
+    for cid, data in pairs(Cache) do
+        local idx = contains(data.apps, appId)
+        if idx then
+            table.remove(data.apps, idx)
+            persist(cid)
+        end
+    end
+    CreateThread(function()
+        while not dbReady do Wait(50) end
+        local pattern = appId:gsub('[_%%\\]', '\\%0') -- JSON_SEARCH のワイルドカードをエスケープ
+        -- 失敗した場合は成功するまでやり直す。それまで ID は予約したまま (オフラインのキャラクターに残ったインストールを
+        -- 同じ ID の別アプリに引き継がせないように)
+        local function purgeRows()
+            local attempt = 0
+            while true do
+                local ok, err = pcall(MySQL.query.await,
+                    'UPDATE `cam_tablet` SET `apps` = JSON_REMOVE(`apps`, JSON_UNQUOTE(JSON_SEARCH(`apps`, \'one\', ?))) ' ..
+                    'WHERE JSON_VALID(`apps`) AND JSON_SEARCH(`apps`, \'one\', ?) IS NOT NULL',
+                    { pattern, pattern })
+                if ok then return end
+                attempt = attempt + 1
+                lib.print.error(('failed to purge installs of %s (attempt %d, retrying): %s'):format(appId, attempt, err))
+                Wait(math.min(attempt * 5000, 60000))
+            end
+        end
+        purgeRows()
+        -- UPDATE より前に始まった読み込みが終わるのを待つ (古い行を読んだ物は stripPurging で取り除かれる)
+        local barrier = LoadSeq
+        while true do
+            local pending = false
+            for seq in pairs(LoadsInFlight) do
+                if seq <= barrier then pending = true break end
+            end
+            if not pending then break end
+            Wait(50)
+        end
+        -- 掃除中は同じ ID を登録できないので、キャッシュに残っている物はすべて古いデータ。取り除いて保存し直す
+        for cid, data in pairs(Cache) do
+            if stripPurging(data.apps) then persist(cid) end
+        end
+        -- 今の時点で書き込み中の保存 (掃除前のデータを含む可能性がある) が終わるのを待ち、DB をもう一度掃除する。
+        -- ここより後の保存は掃除済みのデータなので、これで ID を含む行は残らない
+        local writing = {}
+        for cid in pairs(Writing) do writing[cid] = true end
+        while true do
+            local pending = false
+            for cid in pairs(writing) do
+                if Writing[cid] then pending = true break end
+            end
+            if not pending then break end
+            Wait(50)
+        end
+        purgeRows()
+        -- 掃除が終わってから ID の予約を外す
+        IdOwner[appId] = nil
+        DeleteResourceKvp('owner:' .. appId)
+        DeleteResourceKvp('purge:' .. appId)
+        PurgingIds[appId] = nil
+        -- 掃除中に登録を断られたアプリ (config.lua の物 / 起動時の cam_tablet:ready で登録した物など) を登録し直す
+        registerConfigApps()
+        catalogChanged()
+        TriggerEvent('cam_tablet:ready')
+    end)
+end
+
+for i = 1, #PendingPurges do purgeInstalls(PendingPurges[i]) end
+
+--- アプリを削除して全員のインストールを消し、ID の予約を解除する (予約は掃除が終わった時点で外れる)
+local function releaseApp(appId)
+    if PurgingIds[appId] then return end -- 削除中
+    removeApp(appId)
+    SetResourceKvp('purge:' .. appId, '1') -- 掃除の途中で止まっても、次の起動時にやり直す
+    purgeInstalls(appId)
+    catalogChanged()
+end
+
+exports('RemoveApp', function(appId)
+    -- 登録したリソース (または cam_tablet 自身) だけが削除できる。登録元が停止中の ID も削除して譲れる
+    local owner = type(appId) == 'string' and ownerOf(appId)
+    if not owner then return false end
+    local caller = GetInvokingResource() or GetCurrentResourceName()
+    if owner ~= caller and caller ~= GetCurrentResourceName() then
+        lib.print.warn(('RemoveApp: %s tried to remove app %s owned by %s'):format(caller, appId, owner))
+        return false
+    end
+    releaseApp(appId)
+    return true
+end)
+
+-- サーバーコンソール用: 持ち主のリソースを消した / 名前を変えた時などに ID を解放する (全員のインストールも消える)
+RegisterCommand('cam_tablet_releaseid', function(source, args)
+    if source ~= 0 then return end
+    local appId = args[1]
+    local owner = type(appId) == 'string' and ownerOf(appId)
+    if not owner then
+        print(('cam_tablet: app id %s is not reserved'):format(tostring(appId)))
+        return
+    end
+    if PurgingIds[appId] then
+        print(('cam_tablet: app id %s is already being removed'):format(appId))
+        return
+    end
+    releaseApp(appId)
+    print(('cam_tablet: removing installs of app id %s (owned by %s); the id is released once that finishes'):format(appId, owner))
+end, true)
+
+--- プレイヤーにアプリを付与 (条件チェック無し)
+exports('InstallApp', function(src, appId)
+    return installApp(src, appId, true).ok
+end)
+
+exports('UninstallApp', function(src, appId)
+    local data, _, cid = getData(src)
+    if not data then return false end
+    local idx = contains(data.apps, appId)
+    if not idx then return false end
+    table.remove(data.apps, idx)
+    persist(cid)
+    return true
+end)
+
+exports('HasApp', function(src, appId)
+    local data = getData(src)
+    return data and contains(data.apps, appId) ~= nil or false
+end)
+
+exports('GetInstalledApps', function(src)
+    local data = getData(src)
+    return data and filterInstalled(data.apps) or {}
+end)
+
+--- タブレットに通知を送る
+--- exports.cam_tablet:Notify(source, { title = 'タイトル', message = '本文', icon = 'fa-solid fa-bell', app = 'notes' })
+exports('Notify', function(src, notification)
+    TriggerClientEvent('cam_tablet:client:notify', src, notification)
+end)
+
+-- 外部リソースはこのイベントを受けてアプリを (再) 登録してください。
+-- cam_tablet が再起動された場合も発火するので、登録が消えません。
+CreateThread(function()
+    Wait(0)
+    TriggerEvent('cam_tablet:ready')
+end)
+
+AddEventHandler('onResourceStop', function(resource)
+    if resource == GetCurrentResourceName() then return end
+    local changed = false
+    for i = #CatalogOrder, 1, -1 do
+        local app = Catalog[CatalogOrder[i]]
+        if app.resource == resource then
+            Catalog[app.id] = nil
+            table.remove(CatalogOrder, i)
+            changed = true
+        end
+    end
+    for item, entry in pairs(DeviceItems) do
+        if entry.resource == resource then
+            DeviceItems[item] = nil
+            changed = true -- 開いている専用端末の許可も取り直させる
+        end
+    end
+    if changed then catalogChanged() end
+end)

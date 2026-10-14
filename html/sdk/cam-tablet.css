@@ -1,0 +1,65 @@
+/* cam_tablet 外部アプリ用ベーススタイル (任意)
+   タブレットのテーマ (ダーク/ライト・アクセントカラー) に自動で追従します */
+:root {
+    --ct-accent: #0a84ff;
+    --ct-danger: #ff453a;
+    --ct-success: #30d158;
+    --ct-bg: #0f0f12;
+    --ct-bg-2: #1c1c1f;
+    --ct-bg-3: #2a2a2e;
+    --ct-text: #f5f5f7;
+    --ct-text-2: #a1a1a8;
+    --ct-sep: rgba(255, 255, 255, .08);
+    color-scheme: dark;
+}
+:root[data-theme='light'] {
+    --ct-bg: #f2f2f7;
+    --ct-bg-2: #ffffff;
+    --ct-bg-3: #e5e5ea;
+    --ct-text: #1c1c1e;
+    --ct-text-2: #636366;
+    --ct-sep: rgba(0, 0, 0, .08);
+    color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+    background: var(--ct-bg);
+    color: var(--ct-text);
+    font-family: 'Segoe UI', 'Yu Gothic UI', 'Meiryo UI', 'Hiragino Sans', 'Noto Sans JP', system-ui, sans-serif;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+}
+
+.ct-page { padding: 24px 32px; }
+.ct-title { font-size: 32px; font-weight: 800; margin: 0 0 18px; }
+.ct-card { background: var(--ct-bg-2); border-radius: 16px; padding: 18px 20px; margin-bottom: 14px; }
+.ct-muted { color: var(--ct-text-2); }
+
+.ct-btn {
+    font: inherit;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 10px 18px;
+    border: none;
+    border-radius: 12px;
+    background: var(--ct-bg-3);
+    color: var(--ct-text);
+    cursor: pointer;
+}
+.ct-btn:hover { filter: brightness(1.1); }
+.ct-btn.primary { background: var(--ct-accent); color: #fff; }
+.ct-btn.danger { background: var(--ct-danger); color: #fff; }
+
+.ct-input {
+    font: inherit;
+    width: 100%;
+    padding: 11px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--ct-sep);
+    background: var(--ct-bg-3);
+    color: var(--ct-text);
+    outline: none;
+}
+.ct-input:focus { border-color: var(--ct-accent); }
