@@ -353,13 +353,32 @@ local function persistAwait(cid, data)
     return LastWriteOk[cid] == true
 end
 
+local LoadSeq, LoadsInFlight = 0, {} -- 実行中の読み込み (番号 -> true)。RemoveApp の掃除がこれより前の読み込みを待つのに使う
+
+-- RemoveApp で掃除中の ID を取り除く (掃除の UPDATE より前の行を読んだ場合に残っているため)
+local function stripPurging(apps)
+    local stripped = false
+    for i = #apps, 1, -1 do
+        if PurgingIds[apps[i]] then
+            table.remove(apps, i)
+            stripped = true
+        end
+    end
+    return stripped
+end
+
 local function loadData(cid)
     if Cache[cid] then return Cache[cid] end
     -- 初回起動時はテーブル作成が終わるまで待つ
     while not dbReady do Wait(50) end
     if Cache[cid] then return Cache[cid] end
 
-    local row = MySQL.single.await('SELECT `apps`, `settings`, `notes`, `events` FROM `cam_tablet` WHERE `citizenid` = ?', { cid })
+    LoadSeq = LoadSeq + 1
+    local seq = LoadSeq
+    LoadsInFlight[seq] = true
+    local ok, row = pcall(MySQL.single.await, 'SELECT `apps`, `settings`, `notes`, `events` FROM `cam_tablet` WHERE `citizenid` = ?', { cid })
+    LoadsInFlight[seq] = nil
+    if not ok then error(row, 0) end
     local data
     if row then
         data = {
@@ -377,8 +396,9 @@ local function loadData(cid)
     -- DB を待っている間にログアウト / 切断していたらキャッシュに入れない (破棄済みのため残り続けてしまう)
     -- 呼び出し元は保存できないデータを書き換えることになるので、失敗として扱わせる
     if not isActive(cid) then return nil end
+    local stripped = stripPurging(data.apps)
     Cache[cid] = data
-    if not row then persist(cid) end
+    if not row or stripped then persist(cid) end
     return data
 end
 
@@ -858,10 +878,19 @@ local function purgeInstalls(appId)
             lib.print.error(('failed to purge installs of %s (attempt %d, retrying): %s'):format(appId, attempt, err))
             Wait(math.min(attempt * 5000, 60000))
         end
-        -- 掃除中に同じIDで再登録・再インストールされていた場合、UPDATE が後から消してしまうので
-        -- ログイン中キャラクター (キャッシュが正) は書き戻す
+        -- UPDATE より前に始まった読み込みが終わるのを待つ (古い行を読んだ物は stripPurging で取り除かれる)
+        local barrier = LoadSeq
+        while true do
+            local pending = false
+            for seq in pairs(LoadsInFlight) do
+                if seq <= barrier then pending = true break end
+            end
+            if not pending then break end
+            Wait(50)
+        end
+        -- 掃除中は同じ ID を登録できないので、キャッシュに残っている物はすべて古いデータ。取り除いて保存し直す
         for cid, data in pairs(Cache) do
-            if contains(data.apps, appId) then persist(cid) end
+            if stripPurging(data.apps) then persist(cid) end
         end
         PurgingIds[appId] = nil
     end)
