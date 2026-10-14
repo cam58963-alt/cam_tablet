@@ -898,17 +898,20 @@ local function purgeInstalls(appId)
         local pattern = appId:gsub('[_%%\\]', '\\%0') -- JSON_SEARCH のワイルドカードをエスケープ
         -- 失敗した場合は成功するまでやり直す。それまで ID は予約したまま (オフラインのキャラクターに残ったインストールを
         -- 同じ ID の別アプリに引き継がせないように)
-        local attempt = 0
-        while true do
-            local ok, err = pcall(MySQL.query.await,
-                'UPDATE `cam_tablet` SET `apps` = JSON_REMOVE(`apps`, JSON_UNQUOTE(JSON_SEARCH(`apps`, \'one\', ?))) ' ..
-                'WHERE JSON_VALID(`apps`) AND JSON_SEARCH(`apps`, \'one\', ?) IS NOT NULL',
-                { pattern, pattern })
-            if ok then break end
-            attempt = attempt + 1
-            lib.print.error(('failed to purge installs of %s (attempt %d, retrying): %s'):format(appId, attempt, err))
-            Wait(math.min(attempt * 5000, 60000))
+        local function purgeRows()
+            local attempt = 0
+            while true do
+                local ok, err = pcall(MySQL.query.await,
+                    'UPDATE `cam_tablet` SET `apps` = JSON_REMOVE(`apps`, JSON_UNQUOTE(JSON_SEARCH(`apps`, \'one\', ?))) ' ..
+                    'WHERE JSON_VALID(`apps`) AND JSON_SEARCH(`apps`, \'one\', ?) IS NOT NULL',
+                    { pattern, pattern })
+                if ok then return end
+                attempt = attempt + 1
+                lib.print.error(('failed to purge installs of %s (attempt %d, retrying): %s'):format(appId, attempt, err))
+                Wait(math.min(attempt * 5000, 60000))
+            end
         end
+        purgeRows()
         -- UPDATE より前に始まった読み込みが終わるのを待つ (古い行を読んだ物は stripPurging で取り除かれる)
         local barrier = LoadSeq
         while true do
@@ -923,6 +926,19 @@ local function purgeInstalls(appId)
         for cid, data in pairs(Cache) do
             if stripPurging(data.apps) then persist(cid) end
         end
+        -- 今の時点で書き込み中の保存 (掃除前のデータを含む可能性がある) が終わるのを待ち、DB をもう一度掃除する。
+        -- ここより後の保存は掃除済みのデータなので、これで ID を含む行は残らない
+        local writing = {}
+        for cid in pairs(Writing) do writing[cid] = true end
+        while true do
+            local pending = false
+            for cid in pairs(writing) do
+                if Writing[cid] then pending = true break end
+            end
+            if not pending then break end
+            Wait(50)
+        end
+        purgeRows()
         -- 掃除が終わってから ID の予約を外す
         IdOwner[appId] = nil
         DeleteResourceKvp('owner:' .. appId)
