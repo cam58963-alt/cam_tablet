@@ -36,7 +36,7 @@ QBox (qbx_core) 用のタブレット UI リソースです。
    ```
 3. `ox_inventory/data/items.lua` にタブレットのアイテムを追加
    ```lua
-   ['tablet'] = {
+   ['cam_tablet'] = {
        label = 'タブレット',
        weight = 500,
        stack = false,
@@ -66,7 +66,7 @@ QBox (qbx_core) 用のタブレット UI リソースです。
 
 | 項目 | 説明 |
 |---|---|
-| `Config.TabletItem` | タブレットのアイテム名 |
+| `Config.TabletItem` | タブレットのアイテム名（初期値 `cam_tablet`。他のスクリプトの `tablet` などと被らないように） |
 | `Config.RequireItem` | アイテムが無いとコマンド/キーで開けない |
 | `Config.Command` / `Config.Keybind` | 開くコマンド / キー |
 | `Config.DefaultApps` | 初回からインストール済みのアプリ |
@@ -146,7 +146,7 @@ exports.cam_tablet:RegisterApp({ id = 'racing', ..., deviceItem = 'racing_tablet
 exports.cam_tablet:RegisterAppItem('racing_tablet', 'racing')
 ```
 
-アイテム自体は ox_inventory の `items.lua` に定義してください（`tablet` と同じ書き方）。
+アイテム自体は ox_inventory の `items.lua` に定義してください（`cam_tablet` と同じ書き方）。
 
 ## 外部スクリプトからアプリを追加する
 
