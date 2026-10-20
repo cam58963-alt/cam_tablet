@@ -5,7 +5,7 @@ Config = {}
 ---------------------------------------------------------------------
 
 -- タブレットとして扱うアイテム名 (ox_inventory の items.lua に登録してください)
-Config.TabletItem = 'tablet'
+Config.TabletItem = 'cam_tablet'
 
 -- true: タブレットアイテムを持っていないとコマンド/キーで開けない
 Config.RequireItem = true
