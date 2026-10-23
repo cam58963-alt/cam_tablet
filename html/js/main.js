@@ -49,15 +49,13 @@
             return;
         }
         if (state.standalone && target) {
-            state.locked = false;
-            T.els.lockscreen.classList.add('hidden');
+            T.clearLock();
             T.openApp(target);
         } else if (state.settings.lockScreen) {
             state.pendingApp = target;
             T.lock(false);
         } else {
-            state.locked = false;
-            T.els.lockscreen.classList.add('hidden');
+            T.clearLock();
             if (target) T.openApp(target);
         }
 
