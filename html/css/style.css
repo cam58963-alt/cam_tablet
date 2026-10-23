@@ -401,6 +401,11 @@ input, textarea, select { font: inherit; color: inherit; }
     transition: transform .38s var(--ease), opacity .35s ease, backdrop-filter .3s ease, background .3s;
     text-shadow: 0 2px 8px rgba(0, 0, 0, .3);
 }
+/* ロック中はホーム画面と開いているアプリを隠す (壁紙だけ見せる。backdrop-filter が効かない環境でも透けないように) */
+#screen.is-locked #home,
+#screen.is-locked #dock,
+#screen.is-locked #edit-done,
+#screen.is-locked #app-layer { visibility: hidden; opacity: 0; }
 #lockscreen.pad { backdrop-filter: blur(24px); background: rgba(0, 0, 0, .35); cursor: default; }
 #lockscreen.unlocking { transform: translateY(-100%); opacity: 0; }
 #lockscreen.locking { animation: fade-in .3s ease; }

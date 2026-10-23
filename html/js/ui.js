@@ -776,12 +776,18 @@
         return false;
     };
 
+    // ロック中はホーム画面 (ウィジェット・アプリ・ドック) と開いているアプリを隠し、壁紙だけを見せる
+    function setLockedView(on) {
+        els.screen.classList.toggle('is-locked', on);
+    }
+
     T.lock = function lock(animate) {
         state.locked = true;
         passInput = '';
         T.closeControlCenter();
         hideContextMenu();
         renderLock(false);
+        setLockedView(true);
         els.lockscreen.classList.remove('hidden', 'unlocking');
         if (animate) {
             els.lockscreen.classList.add('locking');
@@ -792,6 +798,7 @@
     T.unlock = function unlock() {
         state.locked = false;
         T.sound('unlock');
+        setLockedView(false); // ロック画面が上に抜けるのに合わせてホーム画面を出す
         els.lockscreen.classList.add('unlocking');
         setTimeout(() => {
             els.lockscreen.classList.add('hidden');
@@ -802,6 +809,14 @@
             state.pendingApp = null;
             T.openApp(id);
         }
+    };
+
+    // アニメーション無しでロックを外す (開いた時にロック画面を使わない場合)
+    T.clearLock = function clearLock() {
+        state.locked = false;
+        setLockedView(false);
+        els.lockscreen.classList.add('hidden');
+        els.lockscreen.classList.remove('unlocking', 'pad');
     };
 
     function onLockClick() {
